@@ -243,7 +243,92 @@ def save_reports(offers: list[ProductOffer], source_stats: list[dict[str, str | 
     Path("latest_ai_prompt.md").write_text(prompt + "\n", encoding="utf-8")
 
 
-def notify_telegram(offers: list[ProductOffer], source_stats: list[dict[str, str | int]] | None = None) -> None:
+def _telegram_signal_offers(offers: list[ProductOffer]) -> list[ProductOffer]:
+    priority = {"urgent_buy": 0, "good_price": 1}
+    interesting = [o for o in offers if classify_signal(o) in {"urgent_buy", "good_price"}]
+    interesting.sort(key=lambda o: (priority[classify_signal(o) or "good_price"], o.price))
+    return interesting
+
+
+def _append_source_summary(lines: list[str], source_stats: list[dict[str, str | int]]) -> None:
+    lines.append("Source summary:")
+    if source_stats:
+        for stat in source_stats:
+            lines.append(f"{stat['source']}: raw {stat['raw_count']} / filtered {stat['filtered_count']}")
+    else:
+        lines.append("n/a")
+
+
+def build_telegram_signal_text(offers: list[ProductOffer], source_stats: list[dict[str, str | int]] | None = None) -> str | None:
+    if source_stats is None:
+        source_stats = []
+
+    interesting = _telegram_signal_offers(offers)
+    if not interesting:
+        return None
+
+    top_items = interesting[:10]
+    lines = ["⚡ RTX 5070 Ti мониторинг", "", "Best signals:"]
+    for idx, offer in enumerate(top_items, start=1):
+        lines.extend(
+            [
+                f"{idx}. {get_signal_label(offer)} — {offer.price:.0f} RUB — {offer.source}",
+                offer.title,
+                offer.url,
+                "",
+            ]
+        )
+
+    _append_source_summary(lines, source_stats)
+    lines.append("")
+    lines.append(f"Total signals: {len(interesting)}")
+    return "\n".join(lines)[:4000]
+
+
+def build_telegram_daily_report_text(offers: list[ProductOffer], source_stats: list[dict[str, str | int]] | None = None) -> str:
+    if source_stats is None:
+        source_stats = []
+
+    signals = _telegram_signal_offers(offers)
+    lines = ["📊 RTX 5070 Ti daily report", "", f"Signals: {len(signals)}"]
+
+    if signals:
+        lines.extend(["", "Best signals:"])
+        for idx, offer in enumerate(signals[:10], start=1):
+            lines.extend(
+                [
+                    f"{idx}. {get_signal_label(offer)} — {offer.price:.0f} RUB — {offer.source}",
+                    offer.title,
+                    offer.url,
+                    "",
+                ]
+            )
+
+    if offers:
+        best = offers[0]
+        lines.extend(
+            [
+                "Best price:",
+                f"{best.price:.0f} {best.currency} — {best.source}",
+                best.title,
+                best.url,
+                "",
+            ]
+        )
+    else:
+        lines.extend(["", "Best price: n/a", ""])
+
+    _append_source_summary(lines, source_stats)
+    lines.append("")
+    lines.append(f"Total offers: {len(offers)}")
+    return "\n".join(lines)[:4000]
+
+
+def notify_telegram(
+    offers: list[ProductOffer],
+    source_stats: list[dict[str, str | int]] | None = None,
+    daily_report: bool = False,
+) -> None:
     if source_stats is None:
         source_stats = []
 
@@ -255,39 +340,16 @@ def notify_telegram(offers: list[ProductOffer], source_stats: list[dict[str, str
     try:
         import requests
 
-        interesting = [o for o in offers if classify_signal(o) in {"urgent_buy", "good_price"}]
-        if not interesting:
-            return
-
-        priority = {"urgent_buy": 0, "good_price": 1}
-        interesting.sort(key=lambda o: (priority[classify_signal(o) or "good_price"], o.price))
-        top_items = interesting[:10]
-
-        lines = ["⚡ RTX 5070 Ti мониторинг", "", "Best signals:"]
-        for idx, offer in enumerate(top_items, start=1):
-            lines.extend(
-                [
-                    f"{idx}. {get_signal_label(offer)} — {offer.price:.0f} RUB — {offer.source}",
-                    offer.title,
-                    offer.url,
-                    "",
-                ]
-            )
-
-        lines.append("Source summary:")
-        if source_stats:
-            for stat in source_stats:
-                lines.append(f"{stat['source']}: raw {stat['raw_count']} / filtered {stat['filtered_count']}")
+        if daily_report:
+            text = build_telegram_daily_report_text(offers, source_stats)
         else:
-            lines.append("n/a")
+            text = build_telegram_signal_text(offers, source_stats)
+            if not text:
+                return
 
-        lines.append("")
-        lines.append(f"Total signals: {len(interesting)}")
-
-        text = "\n".join(lines)[:4000]
         requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            data={"chat_id": chat_id, "text": text},
+            data={"chat_id": chat_id, "text": text[:4000]},
             timeout=15,
         )
     except Exception as exc:
@@ -308,6 +370,7 @@ def run_source(name: str, fn) -> tuple[list[ProductOffer], str]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--browser", action="store_true", help="Use Playwright browser mode for DNS and Ситилинк")
+    parser.add_argument("--daily-report", action="store_true", help="Send Telegram daily report even without buy signals")
     args = parser.parse_args()
 
     configure_logging()
@@ -339,7 +402,7 @@ def main() -> None:
 
     filtered = filter_offers(collected)
     save_reports(filtered, source_stats)
-    notify_telegram(filtered, source_stats)
+    notify_telegram(filtered, source_stats, daily_report=args.daily_report)
 
     print("Source summary:")
     for stat in source_stats:

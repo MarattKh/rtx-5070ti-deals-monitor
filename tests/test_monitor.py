@@ -298,3 +298,94 @@ def test_notify_telegram_includes_source_summary(monkeypatch):
     assert "Ситилинк: raw 8 / filtered 1" in text
     assert "Регард: raw 7 / filtered 1" in text
 
+def test_notify_telegram_daily_report_sends_even_without_signals(monkeypatch):
+    import sys
+    import types
+    import monitor_5070_ti_v_2 as mon
+
+    calls = []
+
+    def fake_post(url, data, timeout):
+        calls.append({"url": url, "data": data, "timeout": timeout})
+
+    monkeypatch.setenv("TG_BOT_TOKEN", "token")
+    monkeypatch.setenv("TG_CHAT_ID", "chat")
+    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
+
+    mon.notify_telegram([mk_offer("RTX 5070 Ti normal", price=100000)], daily_report=True)
+
+    assert len(calls) == 1
+    text = calls[0]["data"]["text"]
+    assert "📊 RTX 5070 Ti daily report" in text
+    assert "Signals: 0" in text
+    assert "Total offers: 1" in text
+
+
+def test_notify_telegram_daily_report_includes_best_price(monkeypatch):
+    import sys
+    import types
+    import monitor_5070_ti_v_2 as mon
+
+    payload = {}
+
+    def fake_post(url, data, timeout):
+        payload["text"] = data["text"]
+
+    monkeypatch.setenv("TG_BOT_TOKEN", "token")
+    monkeypatch.setenv("TG_CHAT_ID", "chat")
+    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
+
+    mon.notify_telegram(
+        [
+            mk_offer("RTX 5070 Ti cheapest", price=94800),
+            mk_offer("RTX 5070 Ti expensive", price=104510),
+        ],
+        [{"source": "Ситилинк", "raw_count": 2, "filtered_count": 2, "error": ""}],
+        daily_report=True,
+    )
+
+    text = payload["text"]
+    assert "Best price:" in text
+    assert "94800 RUB — DNS" in text
+    assert "RTX 5070 Ti cheapest" in text
+    assert "Ситилинк: raw 2 / filtered 2" in text
+
+
+def test_notify_telegram_daily_report_handles_no_offers(monkeypatch):
+    import sys
+    import types
+    import monitor_5070_ti_v_2 as mon
+
+    payload = {}
+
+    def fake_post(url, data, timeout):
+        payload["text"] = data["text"]
+
+    monkeypatch.setenv("TG_BOT_TOKEN", "token")
+    monkeypatch.setenv("TG_CHAT_ID", "chat")
+    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
+
+    mon.notify_telegram([], [], daily_report=True)
+
+    text = payload["text"]
+    assert "Best price: n/a" in text
+    assert "Total offers: 0" in text
+
+
+def test_daily_report_cli_flag_passed_to_notify(monkeypatch):
+    import monitor_5070_ti_v_2 as mon
+
+    captured = {}
+
+    monkeypatch.setattr(mon, "configure_logging", lambda: None)
+    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None: None)
+    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False: captured.update({"daily_report": daily_report}))
+    monkeypatch.setattr(mon.dns, "parse_offers", lambda browser_mode=False: [])
+    monkeypatch.setattr(mon.citilink, "parse_offers", lambda browser_mode=False: [])
+    monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
+    monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py", "--browser", "--daily-report"])
+
+    mon.main()
+
+    assert captured["daily_report"] is True
+
