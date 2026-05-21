@@ -30,6 +30,42 @@ from parsers import (
 
 MAX_PRICE_RUB = 130_000
 
+DEFAULT_CONFIG = {
+    "max_price_rub": 130_000,
+    "new_good_price": 90_000,
+    "new_urgent_buy": 75_000,
+    "used_good_price": 65_000,
+    "used_urgent_buy": 50_000,
+}
+
+
+def load_config(path: str | Path = "config.json") -> dict[str, int]:
+    config = DEFAULT_CONFIG.copy()
+    config_path = Path(path)
+
+    if not config_path.exists():
+        return config
+
+    try:
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            logging.getLogger("config").error("config is not a JSON object: %s", config_path)
+            return config
+
+        for key, default_value in DEFAULT_CONFIG.items():
+            value = raw.get(key, default_value)
+            try:
+                config[key] = int(value)
+            except (TypeError, ValueError):
+                logging.getLogger("config").error("invalid config value for %s: %r", key, value)
+                config[key] = default_value
+
+    except Exception as exc:
+        logging.getLogger("config").exception("failed to load config %s: %s", config_path, exc)
+        return DEFAULT_CONFIG.copy()
+
+    return config
+
 
 
 def configure_logging() -> None:
@@ -81,14 +117,16 @@ def is_accessory_or_invalid(title: str, raw_text: str) -> bool:
 
     return any(keyword in haystack for keyword in bad_keywords)
 
-def filter_offers(offers: Iterable[ProductOffer]) -> list[ProductOffer]:
+def filter_offers(offers: Iterable[ProductOffer], config: dict[str, int] | None = None) -> list[ProductOffer]:
+    if config is None:
+        config = load_config()
     out: list[ProductOffer] = []
     for item in offers:
         if item.price <= 0:
             continue
         if item.currency.upper() != "RUB":
             continue
-        if item.price > MAX_PRICE_RUB:
+        if item.price > config["max_price_rub"]:
             continue
         u = item.url.lower()
         if "?q=" in u or "?text=" in u or "/search" in u:
@@ -105,23 +143,26 @@ def filter_offers(offers: Iterable[ProductOffer]) -> list[ProductOffer]:
     return out
 
 
-def classify_signal(item: ProductOffer) -> str | None:
+def classify_signal(item: ProductOffer, config: dict[str, int] | None = None) -> str | None:
+    if config is None:
+        config = load_config()
+
     c = item.condition.lower()
     if c == "new":
-        if item.price <= 75_000:
+        if item.price <= config["new_urgent_buy"]:
             return "urgent_buy"
-        if item.price <= 90_000:
+        if item.price <= config["new_good_price"]:
             return "good_price"
     if c == "used":
-        if item.price <= 50_000:
+        if item.price <= config["used_urgent_buy"]:
             return "urgent_buy"
-        if item.price <= 65_000:
+        if item.price <= config["used_good_price"]:
             return "good_price"
     return None
 
 
-def get_signal_label(item: ProductOffer) -> str:
-    signal = classify_signal(item)
+def get_signal_label(item: ProductOffer, config: dict[str, int] | None = None) -> str:
+    signal = classify_signal(item, config)
     if signal == "urgent_buy":
         return "URGENT_BUY"
     if signal == "good_price":
@@ -129,7 +170,9 @@ def get_signal_label(item: ProductOffer) -> str:
     return "NORMAL"
 
 
-def render_markdown(offers: list[ProductOffer]) -> str:
+def render_markdown(offers: list[ProductOffer], config: dict[str, int] | None = None) -> str:
+    if config is None:
+        config = load_config()
     lines = [
         "# RTX 5070 Ti offers",
         "",
@@ -138,17 +181,19 @@ def render_markdown(offers: list[ProductOffer]) -> str:
     ]
     for o in offers:
         lines.append(
-            f"| {o.source} | {o.title.replace('|', '/')} | {o.price:.0f} {o.currency} | {o.condition} | {o.availability} | {get_signal_label(o)} | {o.url} |"
+            f"| {o.source} | {o.title.replace('|', '/')} | {o.price:.0f} {o.currency} | {o.condition} | {o.availability} | {get_signal_label(o, config)} | {o.url} |"
         )
     return "\n".join(lines) + "\n"
 
 
-def render_results_markdown(offers: list[ProductOffer], source_stats: list[dict[str, str | int]]) -> str:
+def render_results_markdown(offers: list[ProductOffer], source_stats: list[dict[str, str | int]], config: dict[str, int] | None = None) -> str:
+    if config is None:
+        config = load_config()
     checked_at = datetime.now(timezone.utc).isoformat()
     min_price = f"{min(o.price for o in offers):.0f} RUB" if offers else "n/a"
-    urgent_count = sum(1 for o in offers if get_signal_label(o) == "URGENT_BUY")
-    good_price_count = sum(1 for o in offers if get_signal_label(o) == "GOOD_PRICE")
-    normal_count = sum(1 for o in offers if get_signal_label(o) == "NORMAL")
+    urgent_count = sum(1 for o in offers if get_signal_label(o, config) == "URGENT_BUY")
+    good_price_count = sum(1 for o in offers if get_signal_label(o, config) == "GOOD_PRICE")
+    normal_count = sum(1 for o in offers if get_signal_label(o, config) == "NORMAL")
 
     lines = [
         "# RTX 5070 Ti offers",
@@ -163,11 +208,19 @@ def render_results_markdown(offers: list[ProductOffer], source_stats: list[dict[
         f"- normal count: {normal_count}",
                 f"- best offer: {offers[0].price:.0f} {offers[0].currency} | {offers[0].source} | {offers[0].title} | {offers[0].url}" if offers else "- best offer: n/a",
         "",
+        "## Config",
+        "",
+        f"- max_price_rub: {config['max_price_rub']}",
+        f"- new_good_price: {config['new_good_price']}",
+        f"- new_urgent_buy: {config['new_urgent_buy']}",
+        f"- used_good_price: {config['used_good_price']}",
+        f"- used_urgent_buy: {config['used_urgent_buy']}",
+        "",
         "## Best offers",
         "",
     ]
 
-    best_offers = [o for o in offers if get_signal_label(o) in {"URGENT_BUY", "GOOD_PRICE"}]
+    best_offers = [o for o in offers if get_signal_label(o, config) in {"URGENT_BUY", "GOOD_PRICE"}]
     if best_offers:
         lines.extend(
             [
@@ -177,7 +230,7 @@ def render_results_markdown(offers: list[ProductOffer], source_stats: list[dict[
         )
         for o in best_offers:
             lines.append(
-                f"| {o.source} | {o.title.replace('|', '/')} | {o.price:.0f} {o.currency} | {o.condition} | {o.availability} | {get_signal_label(o)} | {o.url} |"
+                f"| {o.source} | {o.title.replace('|', '/')} | {o.price:.0f} {o.currency} | {o.condition} | {o.availability} | {get_signal_label(o, config)} | {o.url} |"
             )
     else:
         lines.append("No urgent/good-price offers found.")
@@ -209,15 +262,17 @@ def render_results_markdown(offers: list[ProductOffer], source_stats: list[dict[
 
     for o in offers:
         lines.append(
-            f"| {o.source} | {o.title.replace('|', '/')} | {o.price:.0f} {o.currency} | {o.condition} | {o.availability} | {get_signal_label(o)} | {o.url} |"
+            f"| {o.source} | {o.title.replace('|', '/')} | {o.price:.0f} {o.currency} | {o.condition} | {o.availability} | {get_signal_label(o, config)} | {o.url} |"
         )
 
     return "\n".join(lines) + "\n"
 
 
-def save_reports(offers: list[ProductOffer], source_stats: list[dict[str, str | int]] | None = None) -> None:
+def save_reports(offers: list[ProductOffer], source_stats: list[dict[str, str | int]] | None = None, config: dict[str, int] | None = None) -> None:
     if source_stats is None:
         source_stats = []
+    if config is None:
+        config = load_config()
 
     Path("results.json").write_text(
         json.dumps([asdict(x) for x in offers], ensure_ascii=False, indent=2), encoding="utf-8"
@@ -231,10 +286,10 @@ def save_reports(offers: list[ProductOffer], source_stats: list[dict[str, str | 
         for x in offers:
             w.writerow(asdict(x))
 
-    Path("results.md").write_text(render_results_markdown(offers, source_stats), encoding="utf-8")
+    Path("results.md").write_text(render_results_markdown(offers, source_stats, config), encoding="utf-8")
 
     urgent = [o for o in offers if classify_signal(o) == "urgent_buy"]
-    Path("urgent_deals.md").write_text(render_markdown(urgent), encoding="utf-8")
+    Path("urgent_deals.md").write_text(render_markdown(urgent, config), encoding="utf-8")
 
     prompt = (
         "Проанализируй список предложений RTX 5070 Ti, выдели аномально дешевые, "
@@ -243,10 +298,12 @@ def save_reports(offers: list[ProductOffer], source_stats: list[dict[str, str | 
     Path("latest_ai_prompt.md").write_text(prompt + "\n", encoding="utf-8")
 
 
-def _telegram_signal_offers(offers: list[ProductOffer]) -> list[ProductOffer]:
+def _telegram_signal_offers(offers: list[ProductOffer], config: dict[str, int] | None = None) -> list[ProductOffer]:
+    if config is None:
+        config = load_config()
     priority = {"urgent_buy": 0, "good_price": 1}
-    interesting = [o for o in offers if classify_signal(o) in {"urgent_buy", "good_price"}]
-    interesting.sort(key=lambda o: (priority[classify_signal(o) or "good_price"], o.price))
+    interesting = [o for o in offers if classify_signal(o, config) in {"urgent_buy", "good_price"}]
+    interesting.sort(key=lambda o: (priority[classify_signal(o, config) or "good_price"], o.price))
     return interesting
 
 
@@ -259,11 +316,14 @@ def _append_source_summary(lines: list[str], source_stats: list[dict[str, str | 
         lines.append("n/a")
 
 
-def build_telegram_signal_text(offers: list[ProductOffer], source_stats: list[dict[str, str | int]] | None = None) -> str | None:
+def build_telegram_signal_text(offers: list[ProductOffer], source_stats: list[dict[str, str | int]] | None = None, config: dict[str, int] | None = None) -> str | None:
     if source_stats is None:
         source_stats = []
 
-    interesting = _telegram_signal_offers(offers)
+    if config is None:
+        config = load_config()
+
+    interesting = _telegram_signal_offers(offers, config)
     if not interesting:
         return None
 
@@ -285,12 +345,15 @@ def build_telegram_signal_text(offers: list[ProductOffer], source_stats: list[di
     return "\n".join(lines)[:4000]
 
 
-def build_telegram_daily_report_text(offers: list[ProductOffer], source_stats: list[dict[str, str | int]] | None = None) -> str:
+def build_telegram_daily_report_text(offers: list[ProductOffer], source_stats: list[dict[str, str | int]] | None = None, config: dict[str, int] | None = None) -> str:
     if source_stats is None:
         source_stats = []
 
-    signals = _telegram_signal_offers(offers)
-    lines = ["📊 RTX 5070 Ti daily report", "", f"Signals: {len(signals)}"]
+    if config is None:
+        config = load_config()
+
+    signals = _telegram_signal_offers(offers, config)
+    lines = ["📊 RTX 5070 Ti daily report", "", f"Signals: {len(signals)}", f"Thresholds: good <= {config['new_good_price']} RUB, urgent <= {config['new_urgent_buy']} RUB"]
 
     if signals:
         lines.extend(["", "Best signals:"])
@@ -328,9 +391,12 @@ def notify_telegram(
     offers: list[ProductOffer],
     source_stats: list[dict[str, str | int]] | None = None,
     daily_report: bool = False,
+    config: dict[str, int] | None = None,
 ) -> None:
     if source_stats is None:
         source_stats = []
+    if config is None:
+        config = load_config()
 
     token = os.getenv("TG_BOT_TOKEN")
     chat_id = os.getenv("TG_CHAT_ID")
@@ -341,9 +407,9 @@ def notify_telegram(
         import requests
 
         if daily_report:
-            text = build_telegram_daily_report_text(offers, source_stats)
+            text = build_telegram_daily_report_text(offers, source_stats, config)
         else:
-            text = build_telegram_signal_text(offers, source_stats)
+            text = build_telegram_signal_text(offers, source_stats, config)
             if not text:
                 return
 
@@ -374,6 +440,7 @@ def main() -> None:
     args = parser.parse_args()
 
     configure_logging()
+    config = load_config()
     sources = {
         "DNS": dns,
         "Ситилинк": citilink,
@@ -390,7 +457,7 @@ def main() -> None:
 
         collected.extend(source_offers)
 
-        filtered_count = len(filter_offers(source_offers))
+        filtered_count = len(filter_offers(source_offers, config))
         source_stats.append(
             {
                 "source": name,
@@ -400,9 +467,9 @@ def main() -> None:
             }
         )
 
-    filtered = filter_offers(collected)
-    save_reports(filtered, source_stats)
-    notify_telegram(filtered, source_stats, daily_report=args.daily_report)
+    filtered = filter_offers(collected, config)
+    save_reports(filtered, source_stats, config)
+    notify_telegram(filtered, source_stats, daily_report=args.daily_report, config=config)
 
     print("Source summary:")
     for stat in source_stats:

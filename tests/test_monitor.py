@@ -378,8 +378,8 @@ def test_daily_report_cli_flag_passed_to_notify(monkeypatch):
     captured = {}
 
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
-    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None: None)
-    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False: captured.update({"daily_report": daily_report}))
+    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None: None)
+    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: captured.update({"daily_report": daily_report}))
     monkeypatch.setattr(mon.dns, "parse_offers", lambda browser_mode=False: [])
     monkeypatch.setattr(mon.citilink, "parse_offers", lambda browser_mode=False: [])
     monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
@@ -388,4 +388,98 @@ def test_daily_report_cli_flag_passed_to_notify(monkeypatch):
     mon.main()
 
     assert captured["daily_report"] is True
+
+def test_load_config_defaults_when_missing(tmp_path):
+    import monitor_5070_ti_v_2 as mon
+
+    cfg = mon.load_config(tmp_path / "missing.json")
+    assert cfg == mon.DEFAULT_CONFIG
+
+
+def test_load_config_uses_values_from_file(tmp_path):
+    import json
+    import monitor_5070_ti_v_2 as mon
+
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"new_good_price": 95000, "max_price_rub": 120000}), encoding="utf-8")
+
+    cfg = mon.load_config(path)
+    assert cfg["new_good_price"] == 95000
+    assert cfg["max_price_rub"] == 120000
+
+
+def test_load_config_fallbacks_for_missing_keys(tmp_path):
+    import json
+    import monitor_5070_ti_v_2 as mon
+
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"new_good_price": 95000}), encoding="utf-8")
+
+    cfg = mon.load_config(path)
+    assert cfg["new_good_price"] == 95000
+    assert cfg["new_urgent_buy"] == mon.DEFAULT_CONFIG["new_urgent_buy"]
+    assert cfg["used_good_price"] == mon.DEFAULT_CONFIG["used_good_price"]
+
+
+def test_filter_offers_uses_max_price_from_config():
+    import monitor_5070_ti_v_2 as mon
+
+    cfg = mon.DEFAULT_CONFIG.copy()
+    cfg["max_price_rub"] = 95000
+
+    accepted = mk_offer("RTX 5070 Ti", price=94000)
+    rejected = mk_offer("RTX 5070 Ti", price=96000)
+
+    filtered = mon.filter_offers([accepted, rejected], cfg)
+    assert filtered == [accepted]
+
+
+def test_classify_signal_uses_config_thresholds():
+    import monitor_5070_ti_v_2 as mon
+
+    cfg = mon.DEFAULT_CONFIG.copy()
+    cfg["new_good_price"] = 95000
+    cfg["new_urgent_buy"] = 80000
+
+    assert mon.classify_signal(mk_offer("RTX 5070 Ti", price=79000), cfg) == "urgent_buy"
+    assert mon.classify_signal(mk_offer("RTX 5070 Ti", price=94800), cfg) == "good_price"
+    assert mon.classify_signal(mk_offer("RTX 5070 Ti", price=96000), cfg) is None
+
+
+def test_results_md_contains_config_thresholds(tmp_path, monkeypatch):
+    import monitor_5070_ti_v_2 as mon
+
+    cfg = mon.DEFAULT_CONFIG.copy()
+    cfg["new_good_price"] = 95000
+
+    monkeypatch.chdir(tmp_path)
+    mon.save_reports([mk_offer("RTX 5070 Ti", price=94800)], [], cfg)
+
+    content = Path("results.md").read_text(encoding="utf-8")
+    assert "## Config" in content
+    assert "- new_good_price: 95000" in content
+    assert "- max_price_rub:" in content
+
+
+def test_daily_report_telegram_contains_threshold_line(monkeypatch):
+    import sys
+    import types
+    import monitor_5070_ti_v_2 as mon
+
+    payload = {}
+
+    def fake_post(url, data, timeout):
+        payload["text"] = data["text"]
+
+    cfg = mon.DEFAULT_CONFIG.copy()
+    cfg["new_good_price"] = 95000
+    cfg["new_urgent_buy"] = 80000
+
+    monkeypatch.setenv("TG_BOT_TOKEN", "token")
+    monkeypatch.setenv("TG_CHAT_ID", "chat")
+    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
+
+    mon.notify_telegram([mk_offer("RTX 5070 Ti", price=94800)], [], daily_report=True, config=cfg)
+
+    assert "Thresholds: good <= 95000 RUB, urgent <= 80000 RUB" in payload["text"]
 
