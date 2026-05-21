@@ -1,0 +1,7 @@
+{
+  "max_price_rub": 130000,
+  "new_good_price": 90000,
+  "new_urgent_buy": 75000,
+  "used_good_price": 65000,
+  "used_urgent_buy": 50000
+}
