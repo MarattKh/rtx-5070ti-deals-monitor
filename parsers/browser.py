@@ -4,7 +4,14 @@ from pathlib import Path
 from urllib.error import URLError
 
 
-def fetch_html(url: str, timeout_ms: int = 30000, save_to: str | None = None) -> str:
+def fetch_html(
+    url: str,
+    timeout_ms: int = 30000,
+    save_to: str | None = None,
+    wait_selectors: list[str] | None = None,
+    extra_delay_ms: int = 0,
+    screenshot_to: str | None = None,
+) -> str:
     try:
         from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
         from playwright.sync_api import sync_playwright
@@ -31,12 +38,28 @@ def fetch_html(url: str, timeout_ms: int = 30000, save_to: str | None = None) ->
             except PlaywrightTimeoutError:
                 pass
 
+            if wait_selectors:
+                for selector in wait_selectors:
+                    try:
+                        page.wait_for_selector(selector, timeout=3000)
+                        break
+                    except PlaywrightTimeoutError:
+                        continue
+
+            if extra_delay_ms > 0:
+                page.wait_for_timeout(extra_delay_ms)
+
             html = page.content()
 
             if save_to:
                 target = Path(save_to)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(html, encoding="utf-8")
+
+            if screenshot_to:
+                screenshot_target = Path(screenshot_to)
+                screenshot_target.parent.mkdir(parents=True, exist_ok=True)
+                page.screenshot(path=str(screenshot_target), full_page=True)
 
             return html
         finally:

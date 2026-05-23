@@ -592,3 +592,89 @@ def test_daily_report_telegram_contains_threshold_line(monkeypatch):
 
     assert "Thresholds: good <= 95000 RUB, urgent <= 80000 RUB" in payload["text"]
 
+
+def test_dns_detects_http_403_browser_html():
+    from parsers import dns
+
+    html = """
+    <html>
+      <head><title>HTTP 403</title></head>
+      <body>
+        <div class="title">403 Error</div>
+        <div class="sub-title">Forbidden</div>
+        <p>Access to www.dns-shop.ru is forbidden.</p>
+      </body>
+    </html>
+    """
+
+    assert dns.detect_block_reason(html) == "403 forbidden"
+
+
+def test_dns_diagnose_html_detects_qrator_antibot():
+    from parsers import dns
+
+    html = '<html><head><script src="/__qrator/qauth_utm_v2d_v9118.js"></script></head><body></body></html>'
+
+    diagnostics = dns.diagnose_html(html)
+
+    assert diagnostics["contains_qrator"] is True
+    assert diagnostics["contains_captcha"] is True
+    assert diagnostics["contains_catalog_product"] is False
+    assert diagnostics["contains_product_link"] is False
+
+
+def test_dns_browser_qrator_state_returns_warning(monkeypatch):
+    from parsers import dns
+
+    html = '<html><head><script src="/__qrator/qauth_utm_v2d_v9118.js"></script></head><body></body></html>'
+    monkeypatch.setattr(dns, "fetch_html", lambda *args, **kwargs: html)
+
+    result = dns.parse_offers_with_status(browser_mode=True)
+
+    assert result["blocked"] is False
+    assert result["block_reason"] is None
+    assert result["errors"] == 1
+    assert result["offers"] == []
+    assert result["warnings"] == ["DNS browser HTML looks like Qrator anti-bot challenge. Manual verification required."]
+
+
+def test_dns_browser_no_cards_problem_state_returns_warning(monkeypatch):
+    from parsers import dns
+
+    html = "<html><body><main>DNS shell page without product cards</main></body></html>"
+    monkeypatch.setattr(dns, "fetch_html", lambda *args, **kwargs: html)
+
+    result = dns.parse_offers_with_status(browser_mode=True)
+
+    assert result["blocked"] is False
+    assert result["block_reason"] is None
+    assert result["errors"] == 1
+    assert result["offers"] == []
+    assert result["warnings"] == [
+        "DNS browser HTML contains no parsed product cards. Possible parser mismatch, empty state, or anti-bot page."
+    ]
+
+
+def test_dns_parse_product_link_fallback_card():
+    from parsers import dns
+
+    html = """
+    <html>
+      <body>
+        <article class="product-card">
+          <a href="/product/abc123/videokarta-palit-geforce-rtx-5070-ti-gamingpro/">
+            Видеокарта Palit GeForce RTX 5070 Ti GamingPro 16GB
+          </a>
+          <div class="price">89 999 ₽</div>
+        </article>
+      </body>
+    </html>
+    """
+
+    cards = dns.parse_cards(html)
+
+    assert len(cards) == 1
+    assert cards[0]["title"] == "Видеокарта Palit GeForce RTX 5070 Ti GamingPro 16GB"
+    assert cards[0]["url"] == "/product/abc123/videokarta-palit-geforce-rtx-5070-ti-gamingpro/"
+    assert cards[0]["price"] == 89999
+    assert cards[0]["availability"] == "unknown"
