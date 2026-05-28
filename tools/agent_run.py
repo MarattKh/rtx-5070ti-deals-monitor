@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -101,6 +102,17 @@ def quote_arg(arg: str) -> str:
     return arg
 
 
+def resolve_codex_executable() -> str:
+    for candidate in ("codex", "codex.cmd", "codex.exe"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    raise RunnerError(
+        "Codex CLI is not found in PATH. Check that Codex is installed, for example with npm/global install, "
+        "and that its install directory is included in PATH."
+    )
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a local Codex agent task safely.")
     parser.add_argument("--task", required=True, help="Path to task markdown")
@@ -185,7 +197,7 @@ def run_workflow(args: argparse.Namespace, runner: CommandRunner) -> None:
     runner.run(["git", "pull", "--ff-only"], mutates=True)
     runner.run(["git", "checkout", "-b", args.branch], mutates=True)
 
-    runner.run(["codex", "exec", "--profile", "agent"], input_text=task_text, mutates=True)
+    runner.run([resolve_codex_executable(), "exec", "--profile", "agent"], input_text=task_text, mutates=True)
 
     run_checks(runner, default_checks(args.check_monitor))
     show_diff_summary(runner)
@@ -226,4 +238,3 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
