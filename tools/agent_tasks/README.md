@@ -47,6 +47,25 @@ python tools/agent_cycle.py --once --max-tasks 1 --create-pr
 - `--dry-run` передает dry-run в `agent_run.py` и печатает изменяющие команды без выполнения.
 - `--state PATH` задает путь к runtime state, если нужно тестировать или изолировать запуск.
 - `--log PATH` задает путь к логу. По умолчанию используется `C:\ProgramData\MonitorAgent\agent-cycle-last.log`, если есть права на запись.
+- `--notify` включает необязательные уведомления в Telegram и/или email. По умолчанию уведомления выключены.
+- `--notify-test` отправляет тестовое уведомление и завершает процесс без запуска очереди.
+- `--notify-on failed,needs_review` ограничивает события для уведомлений. По умолчанию используются события вмешательства: `needs_review`, `failed`, `auto_merge_denied`, `dirty_worktree`, `pr_created_without_merge`, `cycle_completed_with_errors`.
+
+Настройки уведомлений читаются из переменных окружения и из файла `C:\ProgramData\MonitorAgent\agent-notify.env`; переменные окружения имеют приоритет над файлом. Поддерживаемые ключи:
+
+```text
+AGENT_NOTIFY_TELEGRAM_BOT_TOKEN=...
+AGENT_NOTIFY_TELEGRAM_CHAT_ID=...
+AGENT_NOTIFY_EMAIL_SMTP_HOST=smtp.example.com
+AGENT_NOTIFY_EMAIL_SMTP_PORT=587
+AGENT_NOTIFY_EMAIL_USERNAME=...
+AGENT_NOTIFY_EMAIL_PASSWORD=...
+AGENT_NOTIFY_EMAIL_FROM=agent@example.com
+AGENT_NOTIFY_EMAIL_TO=ops@example.com,dev@example.com
+AGENT_NOTIFY_EMAIL_USE_TLS=true
+```
+
+Для Telegram скрипт использует `urllib.request`, для email - стандартные `smtplib` и `email`. Если не настроен ни один канал, `--notify` ничего не отправляет. Доступные события: `needs_review`, `failed`, `auto_merge_denied`, `dirty_worktree`, `pr_created_without_merge`, `cycle_completed_with_errors`.
 
 Auto-merge специально консервативный. Перед merge скрипт проверяет, что PR открыт и mergeable, получает список измененных файлов через `gh pr diff --name-only`, и отказывает в merge для инфраструктурных и чувствительных путей: `.github/`, `tools/agent_run.py`, `tools/agent_cycle.py`, `tools/agent_tasks/queue.json`, файлы с `secret`, `env`, `token`, `credential` или `key` в пути, scheduler/system setup файлы, а также dependency-файлы вроде `pyproject.toml`, `*.toml` и `requirements*.txt`.
 

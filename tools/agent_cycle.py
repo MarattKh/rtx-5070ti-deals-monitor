@@ -9,11 +9,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
+from tools import agent_notify
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_QUEUE_PATH = ROOT / "tools" / "agent_tasks" / "queue.json"
 DEFAULT_STATE_PATH = Path(r"C:\ProgramData\MonitorAgent\agent-cycle-state.json")
 DEFAULT_LOG_PATH = Path(r"C:\ProgramData\MonitorAgent\agent-cycle-last.log")
+DEFAULT_NOTIFY_ON_EVENTS = (
+    "needs_review",
+    "failed",
+    "auto_merge_denied",
+    "dirty_worktree",
+    "pr_created_without_merge",
+    "cycle_completed_with_errors",
+)
+DEFAULT_NOTIFY_ON = ",".join(DEFAULT_NOTIFY_ON_EVENTS)
 
 DANGEROUS_EXACT_PATHS = {
     "tools/agent_run.py",
@@ -137,6 +148,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Print mutating commands without running them")
     parser.add_argument("--state", help="Runtime state path")
     parser.add_argument("--log", help="Log path")
+    parser.add_argument("--notify", action="store_true", help="Send optional Telegram/email notifications")
+    parser.add_argument("--notify-test", action="store_true", help="Send a test notification and exit")
+    parser.add_argument(
+        "--notify-on",
+        default=DEFAULT_NOTIFY_ON,
+        help=f"Comma-separated notification events or all. Default: {DEFAULT_NOTIFY_ON}",
+    )
     parser.set_defaults(auto_merge_safe=False)
     return parser.parse_args(argv)
 
@@ -317,7 +335,109 @@ def auto_merge_pr(runner: CommandRunner, pr_number: int | str) -> None:
     runner.run(["git", "pull", "--ff-only"], mutates=True)
 
 
+def build_notifier(args: argparse.Namespace) -> agent_notify.Notifier:
+    enabled = bool(getattr(args, "notify", False) or getattr(args, "notify_test", False))
+    if getattr(args, "notify_test", False):
+        events = set(agent_notify.EVENTS)
+    else:
+        events = agent_notify.parse_notify_events(getattr(args, "notify_on", "all"))
+    return agent_notify.Notifier(agent_notify.load_config(), enabled=enabled, events=events)
+
+
+SUGGESTED_ACTIONS = {
+    "needs_review": "Review PR manually and decide whether to merge.",
+    "failed": "Open the task log, inspect the failure, and rerun or fix manually.",
+    "auto_merge_denied": "Review the PR manually because auto-merge policy denied it.",
+    "dirty_worktree": "Inspect local changes and clean or commit the worktree.",
+    "pr_created_without_merge": "Review the created PR and merge manually if acceptable.",
+    "cycle_completed_with_errors": "Inspect cycle log/state and failed task entries.",
+}
+
+
+def _notification_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(str(item) for item in value) if value else "(none)"
+    return str(value)
+
+
+def _notification_task_id(title: str) -> str:
+    parts = title.split()
+    if len(parts) >= 2 and parts[0] == "Task":
+        return parts[1]
+    return "cycle"
+
+
+def build_intervention_notification_details(
+    event: str,
+    title: str,
+    details: dict[str, object] | None,
+    logger: Logger,
+) -> dict[str, object]:
+    raw = dict(details or {})
+    status = _notification_value(raw.get("status"))
+    if not status or "\n" in status or len(status) > 80:
+        status = event
+
+    payload: dict[str, object] = {
+        "task_id": _notification_value(raw.get("task_id") or raw.get("task") or _notification_task_id(title)),
+        "status": status,
+        "reason": _notification_value(raw.get("reason") or raw.get("result") or raw.get("error") or raw.get("status") or title),
+        "pr_url": _notification_value(raw.get("pr_url") or raw.get("pr")),
+        "changed_files": _notification_value(raw.get("changed_files")),
+        "log_path": _notification_value(getattr(logger, "path", "")),
+        "state_path": _notification_value(raw.get("state_path") or raw.get("state")),
+        "suggested_action": SUGGESTED_ACTIONS.get(event, "Inspect the agent log and state file."),
+    }
+
+    consumed = {
+        "task_id",
+        "task",
+        "status",
+        "reason",
+        "result",
+        "error",
+        "pr_url",
+        "pr",
+        "changed_files",
+        "state_path",
+        "state",
+    }
+    for key, value in raw.items():
+        if key not in consumed:
+            payload[key] = _notification_value(value)
+
+    return payload
+
+
+def notify_event(
+    notifier: agent_notify.Notifier,
+    logger: Logger,
+    event: str,
+    title: str,
+    details: dict[str, object] | None = None,
+) -> bool:
+    try:
+        payload = build_intervention_notification_details(event, title, details, logger)
+        sent = notifier.send(event, title, payload)
+    except agent_notify.NotifyError as exc:
+        logger.write(f"Notification failed for {event}: {exc}")
+        return False
+    if sent:
+        logger.write(f"Notification sent: {event}")
+    return sent
+
+
+def check_dirty_worktree(runner: CommandRunner) -> str:
+    proc = runner.run(["git", "status", "--porcelain"], check=False, capture=True)
+    return proc.stdout.strip()
+
+
 def run_cycle(args: argparse.Namespace, runner: CommandRunner) -> int:
+    notifier = build_notifier(args)
     queue_path = resolve_path(args.queue)
     state_path = resolve_path(args.state, base=Path.cwd()) if args.state else DEFAULT_STATE_PATH
     queue = load_queue(queue_path)
@@ -329,14 +449,42 @@ def run_cycle(args: argparse.Namespace, runner: CommandRunner) -> int:
     runner.logger.write(f"State: {state_path}")
     runner.logger.write(f"Selected tasks: {len(tasks)}")
 
+    if notifier.enabled and getattr(notifier, "should_send", lambda _event: True)("dirty_worktree"):
+        dirty = check_dirty_worktree(runner)
+        if dirty:
+            notify_event(
+                notifier,
+                runner.logger,
+                "dirty_worktree",
+                "Agent cycle stopped because the working tree is dirty",
+                {"state": state_path, "status": dirty},
+            )
+            notify_event(
+                notifier,
+                runner.logger,
+                "cycle_completed_with_errors",
+                "Agent cycle stopped before running tasks",
+                {"reason": "dirty_worktree", "state": state_path},
+            )
+            return 1
+
+    error_count = 0
     for task in tasks:
         runner.logger.write(f"Task {task['id']}: running on branch {task['branch']}")
         try:
             runner.run(build_agent_run_command(task, create_pr=args.create_pr, dry_run=args.dry_run), mutates=True)
         except CycleError as exc:
+            error_count += 1
             update_task_state(state, task, status="failed", result=str(exc))
             save_state(state_path, state)
             runner.logger.write(f"Task {task['id']}: failed")
+            notify_event(
+                notifier,
+                runner.logger,
+                "failed",
+                f"Task {task['id']} failed",
+                {"task_id": task["id"], "branch": task["branch"], "result": str(exc), "state": state_path},
+            )
             continue
 
         pr = discover_pr(runner, task["branch"]) if args.create_pr else None
@@ -351,24 +499,95 @@ def run_cycle(args: argparse.Namespace, runner: CommandRunner) -> int:
                 update_task_state(state, task, status="completed", result="merged", pr=pr, changed_files=changed_files)
             else:
                 update_task_state(state, task, status="needs_review", result=reason, pr=pr, changed_files=changed_files)
+                details = {
+                    "task_id": task["id"],
+                    "branch": task["branch"],
+                    "pr": pr.get("url"),
+                    "reason": reason,
+                    "changed_files": changed_files,
+                    "state": state_path,
+                }
+                notify_event(
+                    notifier,
+                    runner.logger,
+                    "auto_merge_denied",
+                    f"Task {task['id']} PR was not auto-merged",
+                    details,
+                )
+                notify_event(
+                    notifier,
+                    runner.logger,
+                    "needs_review",
+                    f"Task {task['id']} needs review",
+                    details,
+                )
         else:
             status = "needs_review" if args.create_pr else "completed"
             update_task_state(state, task, status=status, result="agent_run succeeded", pr=pr, changed_files=changed_files)
+            if status == "needs_review":
+                details = {
+                    "task_id": task["id"],
+                    "branch": task["branch"],
+                    "pr": pr.get("url") if pr else None,
+                    "state": state_path,
+                    "reason": "PR created without merge",
+                    "changed_files": changed_files,
+                }
+                notify_event(
+                    notifier,
+                    runner.logger,
+                    "pr_created_without_merge",
+                    f"Task {task['id']} created a PR without merge",
+                    details,
+                )
+                notify_event(
+                    notifier,
+                    runner.logger,
+                    "needs_review",
+                    f"Task {task['id']} needs review",
+                    details,
+                )
 
         save_state(state_path, state)
 
+    if error_count:
+        notify_event(
+            notifier,
+            runner.logger,
+            "cycle_completed_with_errors",
+            "Agent cycle completed with errors",
+            {"errors": error_count, "state": state_path},
+        )
+        return 1
     return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     configure_stdio()
-    args = parse_args(argv)
-    log_path = resolve_path(args.log, base=Path.cwd()) if args.log else DEFAULT_LOG_PATH
+    try:
+        args = parse_args(argv)
+        log_path = resolve_path(args.log, base=Path.cwd()) if args.log else DEFAULT_LOG_PATH
+    except agent_notify.NotifyError as exc:
+        safe_console_write(f"ERROR: {exc}", stream=sys.stderr)
+        return 1
     logger = Logger(log_path)
     runner = CommandRunner(args.dry_run, logger)
     try:
+        if args.notify_test:
+            notifier = build_notifier(args)
+            sent = notify_event(
+                notifier,
+                logger,
+                "cycle_completed_with_errors",
+                "Agent notification test",
+                {"log": log_path, "test": True},
+            )
+            if not sent:
+                logger.write("Notification test did not send; configure Telegram or email settings first.")
+                return 1
+            return 0
         return run_cycle(args, runner)
-    except CycleError as exc:
+    except (CycleError, agent_notify.NotifyError) as exc:
         logger.write(f"ERROR: {exc}")
         return 1
     finally:
@@ -377,5 +596,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
 
