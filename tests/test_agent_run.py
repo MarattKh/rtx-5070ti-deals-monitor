@@ -1,6 +1,8 @@
 ﻿from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import tools.agent_run as agent_run
 
 
@@ -28,6 +30,34 @@ class FakeRunner:
         return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
 
 
+def test_resolve_codex_executable_uses_shutil_which_candidates(monkeypatch):
+    calls = []
+
+    def fake_which(candidate):
+        calls.append(candidate)
+        return r"C:\npm\codex.cmd" if candidate == "codex.cmd" else None
+
+    monkeypatch.setattr(agent_run.shutil, "which", fake_which)
+
+    assert agent_run.resolve_codex_executable() == r"C:\npm\codex.cmd"
+    assert calls == ["codex", "codex.cmd"]
+
+
+def test_resolve_codex_executable_raises_clear_error_when_missing(monkeypatch):
+    calls = []
+
+    def fake_which(candidate):
+        calls.append(candidate)
+        return None
+
+    monkeypatch.setattr(agent_run.shutil, "which", fake_which)
+
+    with pytest.raises(RuntimeError, match="Codex CLI is not found in PATH"):
+        agent_run.resolve_codex_executable()
+
+    assert calls == ["codex", "codex.cmd", "codex.exe"]
+
+
 def test_default_checks_include_pytest_and_dns_smoke():
     checks = agent_run.default_checks()
 
@@ -42,11 +72,13 @@ def test_default_checks_allow_optional_monitor_check():
     assert checks[-1][1:] == ["monitor_5070_ti_v_2.py"]
 
 
-def test_run_workflow_uses_codex_profile_agent_and_pr_flag(tmp_path, monkeypatch):
+def test_run_workflow_uses_resolved_codex_profile_agent_and_pr_flag(tmp_path, monkeypatch):
     task = tmp_path / "task.md"
     task.write_text("do the thing", encoding="utf-8")
     monkeypatch.setattr(agent_run, "ROOT", tmp_path)
     monkeypatch.setattr(agent_run, "default_checks", lambda include_monitor=False: [["python", "-m", "pytest", "-q"]])
+    resolved_codex = r"C:\npm\codex.cmd"
+    monkeypatch.setattr(agent_run, "resolve_codex_executable", lambda: resolved_codex)
 
     status_calls = {"count": 0}
 
@@ -80,8 +112,9 @@ def test_run_workflow_uses_codex_profile_agent_and_pr_flag(tmp_path, monkeypatch
     agent_run.run_workflow(args, runner)
 
     commands = [cmd for cmd, _ in runner.commands]
-    assert ["codex", "exec", "--profile", "agent"] in commands
-    codex_call = next(kwargs for cmd, kwargs in runner.commands if cmd == ["codex", "exec", "--profile", "agent"])
+    assert [resolved_codex, "exec", "--profile", "agent"] in commands
+    assert ["codex", "exec", "--profile", "agent"] not in commands
+    codex_call = next(kwargs for cmd, kwargs in runner.commands if cmd == [resolved_codex, "exec", "--profile", "agent"])
     assert codex_call["input_text"] == "do the thing"
     assert ["git", "commit", "-m", "Agent test"] in commands
     assert [
@@ -104,6 +137,7 @@ def test_run_workflow_skips_commit_when_no_changes(tmp_path, monkeypatch):
     task.write_text("noop", encoding="utf-8")
     monkeypatch.setattr(agent_run, "ROOT", tmp_path)
     monkeypatch.setattr(agent_run, "default_checks", lambda include_monitor=False: [])
+    monkeypatch.setattr(agent_run, "resolve_codex_executable", lambda: r"C:\npm\codex.cmd")
 
     runner = FakeRunner(
         {
