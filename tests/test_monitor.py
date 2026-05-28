@@ -117,6 +117,30 @@ def test_results_md_source_summary_shows_blocked_dns(tmp_path, monkeypatch):
     assert "| DNS | 0 | 0 |" not in content
 
 
+def test_results_md_source_summary_shows_blocked_citilink(tmp_path, monkeypatch):
+    import monitor_5070_ti_v_2 as mon
+
+    monkeypatch.chdir(tmp_path)
+    mon.save_reports(
+        [],
+        [
+            {
+                "source": "Ситилинк",
+                "raw_count": 0,
+                "filtered_count": 0,
+                "error": "",
+                "blocked": True,
+                "block_reason": "429 too many requests",
+                "warnings": ["Citilink access blocked. Manual verification required."],
+            }
+        ],
+    )
+
+    content = Path("results.md").read_text(encoding="utf-8")
+    assert "| Ситилинк | blocked | 429 too many requests | Citilink access blocked. Manual verification required. |" in content
+    assert "| Ситилинк | 0 | 0 |" not in content
+
+
 def test_no_search_urls_in_results():
     offers = [
         mk_offer("RTX 5070 Ti", url="https://shop.example/search/?q=rtx+5070+ti"),
@@ -214,6 +238,41 @@ def test_citilink_fixture_card_parsing_and_filtering():
     assert "TI" in filtered[0].title.upper()
     assert "/search" not in filtered[0].url and "?q=" not in filtered[0].url and "?text=" not in filtered[0].url
     assert filtered[0].price == 100730
+
+
+def test_citilink_parse_offers_with_status_treats_429_as_blocked(monkeypatch):
+    from urllib.error import HTTPError
+
+    from parsers import citilink
+
+    def raise_429(url):
+        raise HTTPError(url, 429, "Too Many Requests", hdrs=None, fp=None)
+
+    monkeypatch.setattr(citilink, "_download", raise_429)
+
+    result = citilink.parse_offers_with_status()
+
+    assert result["blocked"] is True
+    assert result["block_reason"] == "429 too many requests"
+    assert result["warnings"] == ["Citilink access blocked. Manual verification required."]
+    assert result["errors"] == 1
+    assert result["offers"] == []
+    assert citilink.parse_offers() == []
+
+
+def test_citilink_parse_offers_with_status_detects_blocked_html(monkeypatch):
+    from parsers import citilink
+
+    html = "<html><head><title>429 Too Many Requests</title></head><body>Too many requests</body></html>"
+    monkeypatch.setattr(citilink, "_download", lambda url: html)
+
+    result = citilink.parse_offers_with_status()
+
+    assert result["blocked"] is True
+    assert result["block_reason"] == "429 too many requests"
+    assert result["warnings"] == ["Citilink access blocked. Manual verification required."]
+    assert result["errors"] == 1
+    assert result["offers"] == []
 
 def test_get_signal_label_for_new_good_and_urgent():
     urgent = mk_offer("RTX 5070 Ti", price=75000)
@@ -406,6 +465,40 @@ def test_notify_telegram_source_summary_shows_blocked_dns(monkeypatch):
     assert "Ситилинк: raw 8 / filtered 1" in text
 
 
+def test_notify_telegram_source_summary_shows_blocked_citilink(monkeypatch):
+    import sys
+    import types
+    import monitor_5070_ti_v_2 as mon
+
+    payload = {}
+
+    def fake_post(url, data, timeout):
+        payload["text"] = data["text"]
+
+    monkeypatch.setenv("TG_BOT_TOKEN", "token")
+    monkeypatch.setenv("TG_CHAT_ID", "chat")
+    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
+
+    mon.notify_telegram(
+        [mk_offer("RTX 5070 Ti good", price=90000)],
+        [
+            {
+                "source": "Ситилинк",
+                "raw_count": 0,
+                "filtered_count": 0,
+                "error": "",
+                "blocked": True,
+                "block_reason": "429 too many requests",
+                "warnings": ["Citilink access blocked. Manual verification required."],
+            },
+        ],
+    )
+
+    text = payload["text"]
+    assert "Ситилинк: blocked / 429 too many requests" in text
+    assert "Ситилинк: raw 0 / filtered 0" not in text
+
+
 def test_notify_telegram_daily_report_sends_even_without_signals(monkeypatch):
     import sys
     import types
@@ -490,7 +583,7 @@ def test_daily_report_cli_flag_passed_to_notify(monkeypatch):
     monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: captured.update({"daily_report": daily_report}))
     monkeypatch.setattr(mon.dns, "parse_offers", lambda browser_mode=False: [])
     monkeypatch.setattr(mon.dns, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
-    monkeypatch.setattr(mon.citilink, "parse_offers", lambda browser_mode=False: [])
+    monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
     monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
     monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py", "--browser", "--daily-report"])
 

@@ -31,6 +31,8 @@ SNIPPET_TITLE_RE = re.compile(
 )
 SNIPPET_PRICE_RE = re.compile(r'data-meta-price="(?P<price>\d+)"', re.I)
 
+CITILINK_BLOCK_WARNING = "Citilink access blocked. Manual verification required."
+
 
 def _parse_legacy_cards(html: str) -> list[dict]:
     cards: list[dict] = []
@@ -114,12 +116,24 @@ def parse_cards(html: str) -> list[dict]:
     return _parse_snippet_cards(html)
 
 
-def parse_offers(browser_mode: bool = False) -> list[ProductOffer]:
-    try:
-        html = fetch_html(SEARCH_URL, save_to="debug_html/citilink.html") if browser_mode else _download(SEARCH_URL)
-    except URLError:
-        return []
+def detect_block_reason(html: str) -> str | None:
+    normalized = html.lower()
+    if "429 too many requests" in normalized or "too many requests" in normalized:
+        return "429 too many requests"
+    if (
+        "403 forbidden" in normalized
+        or "http 403" in normalized
+        or "access denied" in normalized
+        or "access forbidden" in normalized
+        or "security check" in normalized
+        or "доступ запрещ" in normalized
+        or "доступ огранич" in normalized
+    ):
+        return "403 forbidden"
+    return None
 
+
+def _build_offers(html: str) -> list[ProductOffer]:
     now = datetime.now(timezone.utc).isoformat()
     offers: list[ProductOffer] = []
 
@@ -143,3 +157,53 @@ def parse_offers(browser_mode: bool = False) -> list[ProductOffer]:
         )
 
     return offers
+
+
+def parse_offers_with_status(browser_mode: bool = False) -> dict:
+    try:
+        html = fetch_html(SEARCH_URL, save_to="debug_html/citilink.html") if browser_mode else _download(SEARCH_URL)
+    except URLError as exc:
+        code = getattr(exc, "code", None)
+        if code in (401, 403, 429):
+            reason = {
+                401: "401 unauthorized",
+                403: "403 forbidden",
+                429: "429 too many requests",
+            }[code]
+            return {
+                "offers": [],
+                "blocked": True,
+                "block_reason": reason,
+                "warnings": [CITILINK_BLOCK_WARNING],
+                "errors": 1,
+            }
+        warning = str(exc) or "Citilink download failed."
+        return {
+            "offers": [],
+            "blocked": False,
+            "block_reason": None,
+            "warnings": [warning],
+            "errors": 1,
+        }
+
+    block_reason = detect_block_reason(html)
+    if block_reason:
+        return {
+            "offers": [],
+            "blocked": True,
+            "block_reason": block_reason,
+            "warnings": [CITILINK_BLOCK_WARNING],
+            "errors": 1,
+        }
+
+    return {
+        "offers": _build_offers(html),
+        "blocked": False,
+        "block_reason": None,
+        "warnings": [],
+        "errors": 0,
+    }
+
+
+def parse_offers(browser_mode: bool = False) -> list[ProductOffer]:
+    return parse_offers_with_status(browser_mode)["offers"]

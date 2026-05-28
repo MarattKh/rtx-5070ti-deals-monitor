@@ -480,7 +480,7 @@ def main() -> None:
 
     for name, module in sources.items():
         status: dict[str, Any] = {}
-        if name == "DNS" and hasattr(module, "parse_offers_with_status"):
+        if module in (dns, citilink) and hasattr(module, "parse_offers_with_status"):
             status, error = run_source_with_status(name, lambda m=module: m.parse_offers_with_status(browser_mode=args.browser))
             source_offers = list(status.get("offers", []))
         elif module in (dns, citilink):
