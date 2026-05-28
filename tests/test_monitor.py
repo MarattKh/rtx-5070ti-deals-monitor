@@ -54,6 +54,65 @@ def test_reports_are_created(tmp_path, monkeypatch):
     assert Path("latest_ai_prompt.md").exists()
 
 
+def test_append_price_history_writes_jsonl_records(tmp_path):
+    import json
+    import monitor_5070_ti_v_2 as mon
+
+    history_path = tmp_path / "price_history.jsonl"
+    timestamp = "2026-05-28T00:00:00+00:00"
+
+    mon.append_price_history(
+        [mk_offer("RTX 5070 Ti Ventus", price=89000)],
+        path=history_path,
+        timestamp=timestamp,
+    )
+
+    lines = history_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+
+    record = json.loads(lines[0])
+    assert record == {
+        "timestamp": timestamp,
+        "source": "DNS",
+        "title": "RTX 5070 Ti Ventus",
+        "price": 89000,
+        "currency": "RUB",
+        "url": "https://example.com/product/1",
+        "condition": "new",
+        "availability": "in_stock",
+        "signal": "GOOD_PRICE",
+    }
+
+
+def test_save_reports_appends_price_history(tmp_path, monkeypatch):
+    import json
+    import monitor_5070_ti_v_2 as mon
+
+    monkeypatch.chdir(tmp_path)
+
+    mon.save_reports([mk_offer("RTX 5070 Ti Ventus", price=89000)], [])
+
+    lines = Path("price_history.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["title"] == "RTX 5070 Ti Ventus"
+
+
+def test_save_reports_continues_when_price_history_fails(tmp_path, monkeypatch):
+    import monitor_5070_ti_v_2 as mon
+
+    monkeypatch.chdir(tmp_path)
+
+    def fail_price_history(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(mon, "append_price_history", fail_price_history)
+
+    mon.save_reports([mk_offer("RTX 5070 Ti Ventus", price=89000)], [])
+
+    assert Path("results.json").exists()
+    assert Path("latest_ai_prompt.md").exists()
+
+
 def test_source_summary_counts_and_errors():
     import monitor_5070_ti_v_2 as mon
 

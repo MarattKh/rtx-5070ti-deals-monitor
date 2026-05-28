@@ -38,6 +38,8 @@ DEFAULT_CONFIG = {
     "used_urgent_buy": 50_000,
 }
 
+PRICE_HISTORY_PATH = Path("price_history.jsonl")
+
 
 def load_config(path: str | Path = "config.json") -> dict[str, int]:
     config = DEFAULT_CONFIG.copy()
@@ -168,6 +170,42 @@ def get_signal_label(item: ProductOffer, config: dict[str, int] | None = None) -
     if signal == "good_price":
         return "GOOD_PRICE"
     return "NORMAL"
+
+
+def build_price_history_record(
+    offer: ProductOffer,
+    timestamp: str,
+    config: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    return {
+        "timestamp": timestamp,
+        "source": offer.source,
+        "title": offer.title,
+        "price": offer.price,
+        "currency": offer.currency,
+        "url": offer.url,
+        "condition": offer.condition,
+        "availability": offer.availability,
+        "signal": get_signal_label(offer, config),
+    }
+
+
+def append_price_history(
+    offers: list[ProductOffer],
+    path: str | Path = PRICE_HISTORY_PATH,
+    config: dict[str, int] | None = None,
+    timestamp: str | None = None,
+) -> None:
+    if config is None:
+        config = load_config()
+    if timestamp is None:
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+    history_path = Path(path)
+    with history_path.open("a", encoding="utf-8") as f:
+        for offer in offers:
+            record = build_price_history_record(offer, timestamp, config)
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def render_markdown(offers: list[ProductOffer], config: dict[str, int] | None = None) -> str:
@@ -313,6 +351,11 @@ def save_reports(offers: list[ProductOffer], source_stats: list[dict[str, Any]] 
         "проверь возможные риски продавца и предложи стратегию покупки."
     )
     Path("latest_ai_prompt.md").write_text(prompt + "\n", encoding="utf-8")
+
+    try:
+        append_price_history(offers, config=config)
+    except Exception as exc:
+        logging.getLogger("price_history").exception("failed to append price history: %s", exc)
 
 
 def _telegram_signal_offers(offers: list[ProductOffer], config: dict[str, int] | None = None) -> list[ProductOffer]:
