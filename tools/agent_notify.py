@@ -81,16 +81,15 @@ def load_config(env: Mapping[str, str] | None = None, env_path: Path = DEFAULT_E
     merged.update(dict(os.environ if env is None else env))
 
     return NotifyConfig(
-        telegram_token=_get(merged, "AGENT_NOTIFY_TELEGRAM_TOKEN", "TELEGRAM_BOT_TOKEN"),
-        telegram_chat_id=_get(merged, "AGENT_NOTIFY_TELEGRAM_CHAT_ID", "TELEGRAM_CHAT_ID"),
-        email_host=_get(merged, "AGENT_NOTIFY_EMAIL_HOST", "SMTP_HOST"),
-        email_port=_parse_int(_get(merged, "AGENT_NOTIFY_EMAIL_PORT", "SMTP_PORT"), default=587),
-        email_username=_get(merged, "AGENT_NOTIFY_EMAIL_USERNAME", "SMTP_USERNAME", "SMTP_USER"),
-        email_password=_get(merged, "AGENT_NOTIFY_EMAIL_PASSWORD", "SMTP_PASSWORD", "SMTP_PASS"),
-        email_from=_get(merged, "AGENT_NOTIFY_EMAIL_FROM", "SMTP_FROM"),
-        email_to=_split_recipients(_get(merged, "AGENT_NOTIFY_EMAIL_TO", "SMTP_TO")),
-        email_tls=_parse_bool(_get(merged, "AGENT_NOTIFY_EMAIL_TLS", "SMTP_TLS"), default=True),
-        email_ssl=_parse_bool(_get(merged, "AGENT_NOTIFY_EMAIL_SSL", "SMTP_SSL"), default=False),
+        telegram_token=_get(merged, "AGENT_NOTIFY_TELEGRAM_BOT_TOKEN"),
+        telegram_chat_id=_get(merged, "AGENT_NOTIFY_TELEGRAM_CHAT_ID"),
+        email_host=_get(merged, "AGENT_NOTIFY_EMAIL_SMTP_HOST"),
+        email_port=_parse_int(_get(merged, "AGENT_NOTIFY_EMAIL_SMTP_PORT"), default=587),
+        email_username=_get(merged, "AGENT_NOTIFY_EMAIL_USERNAME"),
+        email_password=_get(merged, "AGENT_NOTIFY_EMAIL_PASSWORD"),
+        email_from=_get(merged, "AGENT_NOTIFY_EMAIL_FROM"),
+        email_to=_split_recipients(_get(merged, "AGENT_NOTIFY_EMAIL_TO")),
+        email_tls=_parse_bool(_get(merged, "AGENT_NOTIFY_EMAIL_USE_TLS"), default=True),
     )
 
 

@@ -16,6 +16,15 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_QUEUE_PATH = ROOT / "tools" / "agent_tasks" / "queue.json"
 DEFAULT_STATE_PATH = Path(r"C:\ProgramData\MonitorAgent\agent-cycle-state.json")
 DEFAULT_LOG_PATH = Path(r"C:\ProgramData\MonitorAgent\agent-cycle-last.log")
+DEFAULT_NOTIFY_ON_EVENTS = (
+    "needs_review",
+    "failed",
+    "auto_merge_denied",
+    "dirty_worktree",
+    "pr_created_without_merge",
+    "cycle_completed_with_errors",
+)
+DEFAULT_NOTIFY_ON = ",".join(DEFAULT_NOTIFY_ON_EVENTS)
 
 DANGEROUS_EXACT_PATHS = {
     "tools/agent_run.py",
@@ -143,8 +152,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--notify-test", action="store_true", help="Send a test notification and exit")
     parser.add_argument(
         "--notify-on",
-        default="all",
-        help="Comma-separated notification events or all. Default: all",
+        default=DEFAULT_NOTIFY_ON,
+        help=f"Comma-separated notification events or all. Default: {DEFAULT_NOTIFY_ON}",
     )
     parser.set_defaults(auto_merge_safe=False)
     return parser.parse_args(argv)

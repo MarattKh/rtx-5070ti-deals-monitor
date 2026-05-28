@@ -14,19 +14,19 @@ def test_load_config_reads_env_file_and_process_env_overrides(tmp_path):
     env_path.write_text(
         "\n".join(
             [
-                "AGENT_NOTIFY_TELEGRAM_TOKEN=file-token",
+                "AGENT_NOTIFY_TELEGRAM_BOT_TOKEN=file-token",
                 "AGENT_NOTIFY_TELEGRAM_CHAT_ID=file-chat",
-                "AGENT_NOTIFY_EMAIL_HOST=smtp.local",
+                "AGENT_NOTIFY_EMAIL_SMTP_HOST=smtp.local",
                 "AGENT_NOTIFY_EMAIL_FROM=agent@example.test",
                 "AGENT_NOTIFY_EMAIL_TO='ops@example.test;dev@example.test'",
-                "AGENT_NOTIFY_EMAIL_TLS=false",
+                "AGENT_NOTIFY_EMAIL_USE_TLS=false",
             ]
         ),
         encoding="utf-8",
     )
 
     config = agent_notify.load_config(
-        {"AGENT_NOTIFY_TELEGRAM_TOKEN": "env-token", "AGENT_NOTIFY_EMAIL_PORT": "2525"},
+        {"AGENT_NOTIFY_TELEGRAM_BOT_TOKEN": "env-token", "AGENT_NOTIFY_EMAIL_SMTP_PORT": "2525"},
         env_path,
     )
 
@@ -46,6 +46,15 @@ def test_parse_notify_events_accepts_all_and_rejects_unknown():
 
     with pytest.raises(agent_notify.NotifyError, match="Unknown notification"):
         agent_notify.parse_notify_events("failed,unknown")
+
+
+def test_agent_cycle_notify_on_defaults_to_intervention_events():
+    args = agent_cycle.parse_args([])
+
+    assert args.notify_on == (
+        "needs_review,failed,auto_merge_denied,dirty_worktree,"
+        "pr_created_without_merge,cycle_completed_with_errors"
+    )
 
 
 def test_notifier_disabled_or_unconfigured_does_not_send(monkeypatch):

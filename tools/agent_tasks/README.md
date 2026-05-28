@@ -49,21 +49,20 @@ python tools/agent_cycle.py --once --max-tasks 1 --create-pr
 - `--log PATH` задает путь к логу. По умолчанию используется `C:\ProgramData\MonitorAgent\agent-cycle-last.log`, если есть права на запись.
 - `--notify` включает необязательные уведомления в Telegram и/или email. По умолчанию уведомления выключены.
 - `--notify-test` отправляет тестовое уведомление и завершает процесс без запуска очереди.
-- `--notify-on failed,needs_review` ограничивает события для уведомлений. По умолчанию используется `all`.
+- `--notify-on failed,needs_review` ограничивает события для уведомлений. По умолчанию используются события вмешательства: `needs_review`, `failed`, `auto_merge_denied`, `dirty_worktree`, `pr_created_without_merge`, `cycle_completed_with_errors`.
 
 Настройки уведомлений читаются из переменных окружения и из файла `C:\ProgramData\MonitorAgent\agent-notify.env`; переменные окружения имеют приоритет над файлом. Поддерживаемые ключи:
 
 ```text
-AGENT_NOTIFY_TELEGRAM_TOKEN=...
+AGENT_NOTIFY_TELEGRAM_BOT_TOKEN=...
 AGENT_NOTIFY_TELEGRAM_CHAT_ID=...
-AGENT_NOTIFY_EMAIL_HOST=smtp.example.com
-AGENT_NOTIFY_EMAIL_PORT=587
+AGENT_NOTIFY_EMAIL_SMTP_HOST=smtp.example.com
+AGENT_NOTIFY_EMAIL_SMTP_PORT=587
 AGENT_NOTIFY_EMAIL_USERNAME=...
 AGENT_NOTIFY_EMAIL_PASSWORD=...
 AGENT_NOTIFY_EMAIL_FROM=agent@example.com
 AGENT_NOTIFY_EMAIL_TO=ops@example.com,dev@example.com
-AGENT_NOTIFY_EMAIL_TLS=true
-AGENT_NOTIFY_EMAIL_SSL=false
+AGENT_NOTIFY_EMAIL_USE_TLS=true
 ```
 
 Для Telegram скрипт использует `urllib.request`, для email - стандартные `smtplib` и `email`. Если не настроен ни один канал, `--notify` ничего не отправляет. Доступные события: `needs_review`, `failed`, `auto_merge_denied`, `dirty_worktree`, `pr_created_without_merge`, `cycle_completed_with_errors`.
