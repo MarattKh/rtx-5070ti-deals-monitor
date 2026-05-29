@@ -98,7 +98,7 @@
     },
     {
       "id": "stage_2a_report_quality",
-      "status": "pending",
+      "status": "completed",
       "task": "tools/agent_tasks/stage_2a_report_quality.md",
       "branch": "agent/stage-2a-report-quality",
       "pr_title": "Improve RTX monitor report quality",
