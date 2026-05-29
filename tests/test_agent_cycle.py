@@ -101,13 +101,18 @@ def test_select_pending_tasks_empty_queue_selects_zero_tasks():
     assert selected == []
 
 
-def test_select_pending_tasks_skips_completed_state_and_non_pending_queue_items():
+def test_select_pending_tasks_skips_terminal_state_and_non_pending_queue_items():
     queue = [
-        {"id": "done", "status": "pending", "task": "a.md", "branch": "agent/done"},
-        {"id": "paused", "status": "paused", "task": "b.md", "branch": "agent/paused"},
-        {"id": "next", "status": "pending", "task": "c.md", "branch": "agent/next"},
+        {"id": status, "status": "pending", "task": f"{status}.md", "branch": f"agent/{status}"}
+        for status in agent_cycle.TERMINAL_RUNTIME_STATUSES
     ]
-    state = {"tasks": {"done": {"status": "completed"}}}
+    queue.extend(
+        [
+            {"id": "paused", "status": "paused", "task": "b.md", "branch": "agent/paused"},
+            {"id": "next", "status": "pending", "task": "c.md", "branch": "agent/next"},
+        ]
+    )
+    state = {"tasks": {status: {"status": status} for status in agent_cycle.TERMINAL_RUNTIME_STATUSES}}
 
     selected = agent_cycle.select_pending_tasks(queue, state, max_tasks=10)
 
@@ -242,20 +247,21 @@ def test_run_cycle_calls_agent_run_and_records_needs_review_pr(tmp_path):
     assert state["tasks"]["task_a"]["pr_number"] == 4
 
 
-def test_run_cycle_zero_selected_tasks_does_not_execute_agent_or_codex(tmp_path):
+@pytest.mark.parametrize("runtime_status", sorted(agent_cycle.TERMINAL_RUNTIME_STATUSES))
+def test_run_cycle_zero_selected_terminal_tasks_do_not_execute_agent_or_codex(tmp_path, runtime_status):
     task_file = tmp_path / "task.md"
     task_file.write_text("do work", encoding="utf-8")
     queue_path = tmp_path / "queue.json"
     state_path = tmp_path / "state.json"
     task = {
-        "id": "already_done",
+        "id": "terminal_task",
         "status": "pending",
         "task": str(task_file),
-        "branch": "agent/already-done",
+        "branch": "agent/terminal-task",
     }
     write_queue(queue_path, [task])
     state_path.write_text(
-        json.dumps({"tasks": {"already_done": {"status": "completed"}}}),
+        json.dumps({"tasks": {"terminal_task": {"status": runtime_status}}}),
         encoding="utf-8",
     )
     runner = FakeRunner()

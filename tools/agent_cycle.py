@@ -28,6 +28,13 @@ DEFAULT_NOTIFY_ON_EVENTS = (
     "cycle_completed_with_errors",
 )
 DEFAULT_NOTIFY_ON = ",".join(DEFAULT_NOTIFY_ON_EVENTS)
+TERMINAL_RUNTIME_STATUSES = {
+    "completed",
+    "needs_review",
+    "failed",
+    "auto_merge_denied",
+    "pr_created_without_merge",
+}
 
 DANGEROUS_EXACT_PATHS = {
     "tools/agent_run.py",
@@ -215,16 +222,16 @@ def save_state(path: Path, state: dict[str, Any]) -> None:
 
 
 def select_pending_tasks(queue: list[dict[str, Any]], state: dict[str, Any], max_tasks: int) -> list[dict[str, Any]]:
-    completed = {
+    non_runnable = {
         task_id
         for task_id, item in state.get("tasks", {}).items()
-        if isinstance(item, dict) and item.get("status") == "completed"
+        if isinstance(item, dict) and item.get("status") in TERMINAL_RUNTIME_STATUSES
     }
     pending: list[dict[str, Any]] = []
     for task in queue:
         if task.get("status", "pending") != "pending":
             continue
-        if task["id"] in completed:
+        if task["id"] in non_runnable:
             continue
         pending.append(task)
         if len(pending) >= max_tasks:

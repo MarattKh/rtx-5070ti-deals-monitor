@@ -47,7 +47,7 @@ def test_format_status_shows_counts_rows_and_uses_cycle_runnable_logic():
 
     output = agent_queue_status.format_status(queue, state)
 
-    assert "Counts: total=4 pending=3 runnable=2 completed=1 failed=1 needs_review=1" in output
+    assert "Counts: total=4 pending=3 runnable=1 completed=1 failed=1 needs_review=1" in output
     assert "task id" in output
     assert "queue" in output
     assert "state" in output
