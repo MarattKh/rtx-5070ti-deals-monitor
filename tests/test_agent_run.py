@@ -27,8 +27,14 @@ class FakeRunner:
     def run(self, args, **kwargs):
         self.commands.append((list(args), kwargs))
         key = tuple(args)
-        stdout = self.outputs.get(key, "")
-        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+        output = self.outputs.get(key, "")
+        if isinstance(output, tuple):
+            returncode, stdout, stderr = output
+        else:
+            returncode, stdout, stderr = 0, output, ""
+        if kwargs.get("check", True) and returncode != 0:
+            raise agent_run.RunnerError(f"Command failed with exit code {returncode}: {agent_run.format_command(args)}")
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 def test_resolve_codex_executable_uses_shutil_which_candidates(monkeypatch):
@@ -162,6 +168,48 @@ def test_run_workflow_skips_commit_when_no_changes(tmp_path, monkeypatch):
     commands = [cmd for cmd, _ in runner.commands]
     assert ["git", "commit", "-m", "Run agent task task"] not in commands
     assert ["git", "push", "-u", "origin", "agent/noop"] not in commands
+
+
+def test_prepare_task_branch_creates_missing_branch():
+    runner = FakeRunner({("git", "branch", "--list", "--format=%(refname:short)", "agent/new"): ""})
+
+    agent_run.prepare_task_branch(runner, "agent/new")
+
+    commands = [cmd for cmd, _ in runner.commands]
+    assert ["git", "checkout", "-b", "agent/new"] in commands
+    assert ["git", "reset", "--hard", "main"] not in commands
+
+
+def test_prepare_task_branch_reuses_existing_branch_with_no_unique_commits():
+    runner = FakeRunner(
+        {
+            ("git", "branch", "--list", "--format=%(refname:short)", "agent/retry"): "agent/retry\n",
+            ("git", "rev-list", "--count", "main..agent/retry"): "0\n",
+        }
+    )
+
+    agent_run.prepare_task_branch(runner, "agent/retry")
+
+    commands = [cmd for cmd, _ in runner.commands]
+    assert ["git", "checkout", "agent/retry"] in commands
+    assert ["git", "reset", "--hard", "main"] in commands
+    assert any("has no commits outside main" in line for line in runner.logger.lines)
+
+
+def test_prepare_task_branch_stops_when_existing_branch_has_unique_commits():
+    runner = FakeRunner(
+        {
+            ("git", "branch", "--list", "--format=%(refname:short)", "agent/work"): "agent/work\n",
+            ("git", "rev-list", "--count", "main..agent/work"): "2\n",
+        }
+    )
+
+    with pytest.raises(agent_run.RunnerError, match="already exists and has 2 commit"):
+        agent_run.prepare_task_branch(runner, "agent/work")
+
+    commands = [cmd for cmd, _ in runner.commands]
+    assert ["git", "checkout", "agent/work"] not in commands
+    assert ["git", "reset", "--hard", "main"] not in commands
 
 
 class StrictEncodedStream:
