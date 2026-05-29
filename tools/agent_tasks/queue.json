@@ -95,6 +95,38 @@
       "branch": "agent/stage-1p-stale-branch-cleanup",
       "pr_title": "Improve existing task branch recovery",
       "pr_body": "Improve recovery when a local task branch already exists from an earlier interrupted run."
+    },
+    {
+      "id": "stage_2a_report_quality",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_2a_report_quality.md",
+      "branch": "agent/stage-2a-report-quality",
+      "pr_title": "Improve RTX monitor report quality",
+      "pr_body": "Improve daily report readability and source summary formatting."
+    },
+    {
+      "id": "stage_2a_offer_deduplication",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_2a_offer_deduplication.md",
+      "branch": "agent/stage-2a-offer-deduplication",
+      "pr_title": "Add RTX offer deduplication",
+      "pr_body": "Deduplicate repeated offers before report generation while preserving source raw counts."
+    },
+    {
+      "id": "stage_2a_history_rotation",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_2a_history_rotation.md",
+      "branch": "agent/stage-2a-history-rotation",
+      "pr_title": "Add price history maintenance helper",
+      "pr_body": "Add conservative maintenance for durable price history files."
+    },
+    {
+      "id": "stage_2a_source_stats_summary",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_2a_source_stats_summary.md",
+      "branch": "agent/stage-2a-source-stats-summary",
+      "pr_title": "Add source stats summary helper",
+      "pr_body": "Add classification for source statistics to support daily review."
     }
   ]
 }
