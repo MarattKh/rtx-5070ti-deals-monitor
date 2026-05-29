@@ -247,6 +247,43 @@ def test_run_cycle_calls_agent_run_and_records_needs_review_pr(tmp_path):
     assert state["tasks"]["task_a"]["pr_number"] == 4
 
 
+def test_run_cycle_records_pushed_branch_without_pr_as_needs_review(tmp_path):
+    task_file = tmp_path / "task.md"
+    task_file.write_text("do work", encoding="utf-8")
+    queue_path = tmp_path / "queue.json"
+    state_path = tmp_path / "state.json"
+    task = {
+        "id": "task_a",
+        "status": "pending",
+        "task": str(task_file),
+        "branch": "agent/a",
+        "pr_title": "Task A",
+        "pr_body": "Body A",
+    }
+    write_queue(queue_path, [task])
+    runner = FakeRunner(
+        {
+            ("git", "ls-remote", "--heads", "origin", "agent/a"): "abc123def456\trefs/heads/agent/a\n",
+            ("git", "status", "--porcelain"): "",
+        },
+        fail_prefix=[[agent_cycle.sys.executable, str(agent_cycle.ROOT / "tools" / "agent_run.py")]],
+    )
+    args = make_cycle_args(queue_path, state_path, create_pr=True)
+
+    result = agent_cycle.run_cycle(args, runner)
+
+    assert result == 0
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    task_state = state["tasks"]["task_a"]
+    assert task_state["status"] == "needs_review"
+    assert task_state["pr_url"] is None
+    assert "branch=agent/a" in task_state["result"]
+    assert "commit_sha=abc123def456" in task_state["result"]
+    assert "worktree_clean=yes" in task_state["result"]
+    assert 'suggested_pr_command=gh pr create --base main --head agent/a --title "Task A" --body "Body A"' in task_state["result"]
+    assert "Task task_a: pushed branch needs PR recovery" in runner.logger.lines
+
+
 @pytest.mark.parametrize("runtime_status", sorted(agent_cycle.TERMINAL_RUNTIME_STATUSES))
 def test_run_cycle_zero_selected_terminal_tasks_do_not_execute_agent_or_codex(tmp_path, runtime_status):
     task_file = tmp_path / "task.md"

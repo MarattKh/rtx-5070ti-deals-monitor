@@ -133,6 +133,56 @@ def test_run_workflow_uses_resolved_codex_profile_agent_and_pr_flag(tmp_path, mo
     ] in commands
 
 
+def test_run_workflow_logs_recovery_details_when_pr_creation_fails(tmp_path, monkeypatch):
+    task = tmp_path / "task.md"
+    task.write_text("do work", encoding="utf-8")
+    monkeypatch.setattr(agent_run, "ROOT", tmp_path)
+    monkeypatch.setattr(agent_run, "default_checks", lambda include_monitor=False: [])
+    monkeypatch.setattr(agent_run, "resolve_codex_executable", lambda: r"C:\npm\codex.cmd")
+
+    status_calls = {"count": 0}
+
+    class PrFailureRunner(FakeRunner):
+        def run(self, args, **kwargs):
+            command = list(args)
+            self.commands.append((command, kwargs))
+            if command[:3] == ["gh", "pr", "create"]:
+                raise agent_run.RunnerError("forced PR failure")
+            if command == ["git", "status", "--porcelain"]:
+                status_calls["count"] += 1
+                stdout = " M file.py\n" if status_calls["count"] == 2 else ""
+            else:
+                stdout = self.outputs.get(tuple(command), "")
+            return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    runner = PrFailureRunner(
+        {
+            ("git", "rev-parse", "--is-inside-work-tree"): "true\n",
+            ("git", "status", "--short"): " M file.py\n",
+            ("git", "diff", "--stat"): " file.py | 1 +\n",
+            ("git", "rev-parse", "HEAD"): "abc123def456\n",
+        }
+    )
+    args = SimpleNamespace(
+        task=str(task),
+        branch="agent/recovery",
+        create_pr=True,
+        pr_title="Recovery title",
+        pr_body="Recovery body",
+        check_monitor=False,
+    )
+
+    with pytest.raises(agent_run.RunnerError, match="forced PR failure"):
+        agent_run.run_workflow(args, runner)
+
+    log = "\n".join(runner.logger.lines)
+    assert "Pushed branch recovery details:" in log
+    assert "Branch: agent/recovery" in log
+    assert "Commit SHA: abc123def456" in log
+    assert 'Suggested PR command: gh pr create --base main --head agent/recovery --title "Recovery title" --body "Recovery body"' in log
+    assert "Worktree clean: yes" in log
+
+
 def test_run_workflow_skips_commit_when_no_changes(tmp_path, monkeypatch):
     task = tmp_path / "task.md"
     task.write_text("noop", encoding="utf-8")

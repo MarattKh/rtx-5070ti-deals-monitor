@@ -294,6 +294,57 @@ def discover_pr(runner: CommandRunner, branch: str) -> dict[str, Any] | None:
     return raw if isinstance(raw, dict) else None
 
 
+def discover_remote_branch_sha(runner: CommandRunner, branch: str) -> str | None:
+    proc = runner.run(["git", "ls-remote", "--heads", "origin", branch], check=False, capture=True)
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    first_line = proc.stdout.splitlines()[0].strip()
+    if not first_line:
+        return None
+    return first_line.split()[0]
+
+
+def build_recovery_pr_create_command(task: dict[str, Any]) -> list[str]:
+    return [
+        "gh",
+        "pr",
+        "create",
+        "--base",
+        "main",
+        "--head",
+        str(task["branch"]),
+        "--title",
+        str(task.get("pr_title") or task["id"]),
+        "--body",
+        str(task.get("pr_body") or f"Automated queued agent task `{task['id']}`."),
+    ]
+
+
+def pushed_branch_recovery_details(runner: CommandRunner, task: dict[str, Any]) -> dict[str, object] | None:
+    commit_sha = discover_remote_branch_sha(runner, task["branch"])
+    if not commit_sha:
+        return None
+    pr_command = build_recovery_pr_create_command(task)
+    dirty = check_dirty_worktree(runner)
+    return {
+        "branch": task["branch"],
+        "commit_sha": commit_sha,
+        "suggested_pr_command": format_command(pr_command),
+        "worktree_clean": "no" if dirty else "yes",
+    }
+
+
+def format_pushed_branch_recovery_result(details: dict[str, object], error: Exception) -> str:
+    return (
+        "agent_run failed after pushing branch; no PR was recorded. "
+        f"branch={details['branch']} "
+        f"commit_sha={details['commit_sha']} "
+        f"worktree_clean={details['worktree_clean']} "
+        f"suggested_pr_command={details['suggested_pr_command']} "
+        f"original_error={error}"
+    )
+
+
 def list_pr_changed_files(runner: CommandRunner, pr_number: int | str) -> list[str]:
     proc = runner.run(["gh", "pr", "diff", str(pr_number), "--name-only"], check=True, capture=True)
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
@@ -484,6 +535,23 @@ def run_cycle(args: argparse.Namespace, runner: CommandRunner) -> int:
         try:
             runner.run(build_agent_run_command(task, create_pr=args.create_pr, dry_run=args.dry_run), mutates=True)
         except CycleError as exc:
+            recovery_details = pushed_branch_recovery_details(runner, task) if args.create_pr else None
+            if recovery_details:
+                pr = discover_pr(runner, task["branch"])
+                result = format_pushed_branch_recovery_result(recovery_details, exc)
+                update_task_state(state, task, status="needs_review", result=result, pr=pr)
+                save_state(state_path, state)
+                runner.logger.write(f"Task {task['id']}: pushed branch needs PR recovery")
+                runner.logger.write(result)
+                notify_event(
+                    notifier,
+                    runner.logger,
+                    "needs_review",
+                    f"Task {task['id']} needs PR recovery",
+                    {"task_id": task["id"], "state": state_path, "reason": result, **recovery_details},
+                )
+                continue
+
             error_count += 1
             update_task_state(state, task, status="failed", result=str(exc))
             save_state(state_path, state)

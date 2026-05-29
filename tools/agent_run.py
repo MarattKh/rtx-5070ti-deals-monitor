@@ -197,6 +197,28 @@ def show_diff_summary(runner: CommandRunner) -> None:
         runner.logger.write("No changes.")
 
 
+def worktree_clean_status(runner: CommandRunner) -> bool:
+    proc = runner.run(["git", "status", "--porcelain"], check=False, capture=True)
+    return not bool(proc.stdout.strip())
+
+
+def current_commit_sha(runner: CommandRunner) -> str:
+    proc = runner.run(["git", "rev-parse", "HEAD"], check=False, capture=True)
+    return proc.stdout.strip()
+
+
+def build_pr_create_command(branch: str, title: str, body: str) -> list[str]:
+    return ["gh", "pr", "create", "--base", "main", "--head", branch, "--title", title, "--body", body]
+
+
+def log_pushed_branch_recovery(runner: CommandRunner, *, branch: str, commit_sha: str, pr_command: Sequence[str]) -> None:
+    runner.logger.write("Pushed branch recovery details:")
+    runner.logger.write(f"Branch: {branch}")
+    runner.logger.write(f"Commit SHA: {commit_sha or 'unknown'}")
+    runner.logger.write(f"Suggested PR command: {format_command(pr_command)}")
+    runner.logger.write(f"Worktree clean: {'yes' if worktree_clean_status(runner) else 'no'}")
+
+
 def run_checks(runner: CommandRunner, checks: Iterable[Sequence[str]]) -> None:
     for check_cmd in checks:
         runner.run(check_cmd)
@@ -232,16 +254,21 @@ def run_workflow(args: argparse.Namespace, runner: CommandRunner) -> None:
     runner.run(["git", "add", "-A"], mutates=True)
     commit_message = args.pr_title or f"Run agent task {task_path.stem}"
     runner.run(["git", "commit", "-m", commit_message], mutates=True)
+    commit_sha = current_commit_sha(runner)
     runner.run(["git", "push", "-u", "origin", args.branch], mutates=True)
 
+    pr_title = args.pr_title or commit_message
+    pr_body = args.pr_body or f"Automated local agent run for `{task_path.name}`."
+    pr_command = build_pr_create_command(args.branch, pr_title, pr_body)
+
     if args.create_pr:
-        pr_title = args.pr_title or commit_message
-        pr_body = args.pr_body or f"Automated local agent run for `{task_path.name}`."
-        runner.run(
-            ["gh", "pr", "create", "--base", "main", "--head", args.branch, "--title", pr_title, "--body", pr_body],
-            mutates=True,
-        )
+        try:
+            runner.run(pr_command, mutates=True)
+        except RunnerError:
+            log_pushed_branch_recovery(runner, branch=args.branch, commit_sha=commit_sha, pr_command=pr_command)
+            raise
     else:
+        log_pushed_branch_recovery(runner, branch=args.branch, commit_sha=commit_sha, pr_command=pr_command)
         runner.logger.write("PR creation skipped. Re-run with --create-pr or create it manually after review.")
 
 
