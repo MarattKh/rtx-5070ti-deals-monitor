@@ -39,6 +39,18 @@ def write_queue(path, tasks):
     path.write_text(json.dumps({"tasks": tasks}, ensure_ascii=False), encoding="utf-8")
 
 
+def make_cycle_args(queue_path, state_path, *, max_tasks=1, create_pr=True, auto_merge_safe=False, dry_run=False):
+    return SimpleNamespace(
+        queue=str(queue_path),
+        state=str(state_path),
+        max_tasks=max_tasks,
+        create_pr=create_pr,
+        auto_merge_safe=auto_merge_safe,
+        dry_run=dry_run,
+        once=True,
+    )
+
+
 def test_load_queue_accepts_tasks_object(tmp_path):
     queue_path = tmp_path / "queue.json"
     write_queue(
@@ -83,18 +95,34 @@ def test_load_queue_accepts_utf8_bom(tmp_path):
     assert tasks[0]["id"] == "task_bom"
 
 
+def test_select_pending_tasks_empty_queue_selects_zero_tasks():
+    selected = agent_cycle.select_pending_tasks([], {"tasks": {}}, max_tasks=1)
+
+    assert selected == []
+
+
 def test_select_pending_tasks_skips_completed_state_and_non_pending_queue_items():
     queue = [
         {"id": "done", "status": "pending", "task": "a.md", "branch": "agent/done"},
         {"id": "paused", "status": "paused", "task": "b.md", "branch": "agent/paused"},
         {"id": "next", "status": "pending", "task": "c.md", "branch": "agent/next"},
-        {"id": "later", "status": "pending", "task": "d.md", "branch": "agent/later"},
     ]
     state = {"tasks": {"done": {"status": "completed"}}}
 
-    selected = agent_cycle.select_pending_tasks(queue, state, max_tasks=1)
+    selected = agent_cycle.select_pending_tasks(queue, state, max_tasks=10)
 
     assert [task["id"] for task in selected] == ["next"]
+
+
+def test_select_pending_tasks_max_tasks_one_limits_one_runnable_task():
+    queue = [
+        {"id": "first", "status": "pending", "task": "a.md", "branch": "agent/first"},
+        {"id": "second", "status": "pending", "task": "b.md", "branch": "agent/second"},
+    ]
+
+    selected = agent_cycle.select_pending_tasks(queue, {"tasks": {}}, max_tasks=1)
+
+    assert [task["id"] for task in selected] == ["first"]
 
 
 def test_update_task_state_records_pr_metadata_and_result(monkeypatch):
@@ -200,15 +228,7 @@ def test_run_cycle_calls_agent_run_and_records_needs_review_pr(tmp_path):
     write_queue(queue_path, [task])
     pr_view = json.dumps({"number": 4, "url": "https://github.test/pull/4", "state": "OPEN", "mergeable": "MERGEABLE"})
     runner = FakeRunner({("gh", "pr", "view", "agent/a", "--json", "number,url,state,mergeable"): pr_view})
-    args = SimpleNamespace(
-        queue=str(queue_path),
-        state=str(state_path),
-        max_tasks=1,
-        create_pr=True,
-        auto_merge_safe=False,
-        dry_run=False,
-        once=True,
-    )
+    args = make_cycle_args(queue_path, state_path)
 
     agent_cycle.run_cycle(args, runner)
 
@@ -220,6 +240,32 @@ def test_run_cycle_calls_agent_run_and_records_needs_review_pr(tmp_path):
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["tasks"]["task_a"]["status"] == "needs_review"
     assert state["tasks"]["task_a"]["pr_number"] == 4
+
+
+def test_run_cycle_zero_selected_tasks_does_not_execute_agent_or_codex(tmp_path):
+    task_file = tmp_path / "task.md"
+    task_file.write_text("do work", encoding="utf-8")
+    queue_path = tmp_path / "queue.json"
+    state_path = tmp_path / "state.json"
+    task = {
+        "id": "already_done",
+        "status": "pending",
+        "task": str(task_file),
+        "branch": "agent/already-done",
+    }
+    write_queue(queue_path, [task])
+    state_path.write_text(
+        json.dumps({"tasks": {"already_done": {"status": "completed"}}}),
+        encoding="utf-8",
+    )
+    runner = FakeRunner()
+
+    result = agent_cycle.run_cycle(make_cycle_args(queue_path, state_path), runner)
+
+    commands = [cmd for cmd, _ in runner.commands]
+    assert result == 0
+    assert commands == []
+    assert "Selected tasks: 0" in runner.logger.lines
 
 
 def test_run_cycle_auto_merge_safe_merges_safe_pr(tmp_path):
@@ -236,15 +282,7 @@ def test_run_cycle_auto_merge_safe_merges_safe_pr(tmp_path):
             ("gh", "pr", "diff", "4", "--name-only"): "parsers/citilink.py\ntests/test_monitor.py\n",
         }
     )
-    args = SimpleNamespace(
-        queue=str(queue_path),
-        state=str(state_path),
-        max_tasks=1,
-        create_pr=True,
-        auto_merge_safe=True,
-        dry_run=False,
-        once=True,
-    )
+    args = make_cycle_args(queue_path, state_path, auto_merge_safe=True)
 
     agent_cycle.run_cycle(args, runner)
 
@@ -271,15 +309,7 @@ def test_run_cycle_auto_merge_safe_leaves_dangerous_pr_open(tmp_path):
             ("gh", "pr", "diff", "4", "--name-only"): "tools/agent_cycle.py\n",
         }
     )
-    args = SimpleNamespace(
-        queue=str(queue_path),
-        state=str(state_path),
-        max_tasks=1,
-        create_pr=True,
-        auto_merge_safe=True,
-        dry_run=False,
-        once=True,
-    )
+    args = make_cycle_args(queue_path, state_path, auto_merge_safe=True)
 
     agent_cycle.run_cycle(args, runner)
 
@@ -288,3 +318,4 @@ def test_run_cycle_auto_merge_safe_leaves_dangerous_pr_open(tmp_path):
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["tasks"]["task_a"]["status"] == "needs_review"
     assert "dangerous files changed" in state["tasks"]["task_a"]["result"]
+
