@@ -152,8 +152,8 @@ def test_results_md_contains_summary_and_source_summary(tmp_path, monkeypatch):
     content = Path("results.md").read_text(encoding="utf-8")
     assert "## Summary" in content
     assert "## Source summary" in content
-    assert "| Source | Status | Raw offers | Filtered offers | Details |" in content
-    assert "| DNS | available | 3 | 1 | ok |" in content
+    assert "| Source | Classification | Raw offers | Filtered offers | Reason | Warnings |" in content
+    assert "| DNS | ok | 3 | 1 | ok | none |" in content
 
 
 @pytest.mark.parametrize("reason", ["401 unauthorized", "403 forbidden", "429 too many requests"])
@@ -170,8 +170,8 @@ def test_source_summary_formats_blocked_status_instead_of_empty_counts(reason):
         "warnings": ["Manual verification required."],
     }
 
-    assert mon._format_source_summary_text(stat) == f"ExampleShop: unavailable; raw 0; filtered 0; blocked: {reason}; warnings: Manual verification required."
-    assert mon._format_source_summary_markdown_row(stat) == f"| ExampleShop | unavailable | 0 | 0 | blocked: {reason}; warnings: Manual verification required. |"
+    assert mon._format_source_summary_text(stat) == f"ExampleShop: unavailable; raw 0; filtered 0; reason: blocked: {reason}; warnings: Manual verification required."
+    assert mon._format_source_summary_markdown_row(stat) == f"| ExampleShop | unavailable | 0 | 0 | blocked: {reason} | Manual verification required. |"
     assert "raw 0 / filtered 0" not in mon._format_source_summary_text(stat)
     assert "| ExampleShop | 0 | 0 |" not in mon._format_source_summary_markdown_row(stat)
 
@@ -181,11 +181,11 @@ def test_source_summary_formats_successful_counts():
 
     stat = {"source": "ExampleShop", "raw_count": 3, "filtered_count": 1, "error": ""}
 
-    assert mon._format_source_summary_text(stat) == "ExampleShop: available; raw 3; filtered 1; ok"
-    assert mon._format_source_summary_markdown_row(stat) == "| ExampleShop | available | 3 | 1 | ok |"
+    assert mon._format_source_summary_text(stat) == "ExampleShop: ok; raw 3; filtered 1; reason: ok; warnings: none"
+    assert mon._format_source_summary_markdown_row(stat) == "| ExampleShop | ok | 3 | 1 | ok | none |"
 
 
-def test_source_summary_formats_limited_warning_row():
+def test_source_summary_formats_no_filtered_warning_row():
     import monitor_5070_ti_v_2 as mon
 
     stat = {
@@ -197,8 +197,42 @@ def test_source_summary_formats_limited_warning_row():
         "warnings": ["DNS browser HTML contains no parsed product cards."],
     }
 
-    assert mon._format_source_summary_text(stat) == "DNS: limited; raw 0; filtered 0; warnings: DNS browser HTML contains no parsed product cards."
-    assert mon._format_source_summary_markdown_row(stat) == "| DNS | limited | 0 | 0 | warnings: DNS browser HTML contains no parsed product cards. |"
+    assert mon._format_source_summary_text(stat) == "DNS: no_filtered_offers; raw 0; filtered 0; reason: no offers after parsing; warnings: DNS browser HTML contains no parsed product cards."
+    assert mon._format_source_summary_markdown_row(stat) == "| DNS | no_filtered_offers | 0 | 0 | no offers after parsing | DNS browser HTML contains no parsed product cards. |"
+
+
+def test_summarize_source_stats_classifies_all_review_states():
+    import monitor_5070_ti_v_2 as mon
+
+    summaries = mon.summarize_source_stats(
+        [
+            {"source": "OK", "raw_count": 3, "filtered_count": 1, "error": "", "warnings": []},
+            {"source": "Filtered", "raw_count": 3, "filtered_count": 0, "error": "", "warnings": ["all offers above max price"]},
+            {"source": "Blocked", "raw_count": 0, "filtered_count": 0, "error": "", "blocked": True, "block_reason": "403 forbidden"},
+            {"source": "Broken", "raw_count": 0, "filtered_count": 0, "error": "boom", "warnings": []},
+        ]
+    )
+
+    assert summaries == [
+        {"source": "OK", "classification": "ok", "raw_count": 3, "filtered_count": 1, "reason": "ok", "warnings": []},
+        {
+            "source": "Filtered",
+            "classification": "no_filtered_offers",
+            "raw_count": 3,
+            "filtered_count": 0,
+            "reason": "raw offers did not pass filters",
+            "warnings": ["all offers above max price"],
+        },
+        {
+            "source": "Blocked",
+            "classification": "unavailable",
+            "raw_count": 0,
+            "filtered_count": 0,
+            "reason": "blocked: 403 forbidden",
+            "warnings": [],
+        },
+        {"source": "Broken", "classification": "error", "raw_count": 0, "filtered_count": 0, "reason": "boom", "warnings": []},
+    ]
 
 
 def test_results_md_source_summary_shows_blocked_dns(tmp_path, monkeypatch):
@@ -221,7 +255,7 @@ def test_results_md_source_summary_shows_blocked_dns(tmp_path, monkeypatch):
     )
 
     content = Path("results.md").read_text(encoding="utf-8")
-    assert "| DNS | unavailable | 0 | 0 | blocked: 403 forbidden; warnings: DNS access forbidden. Manual verification required. |" in content
+    assert "| DNS | unavailable | 0 | 0 | blocked: 403 forbidden | DNS access forbidden. Manual verification required. |" in content
     assert "| DNS | 0 | 0 |" not in content
 
 
@@ -245,7 +279,7 @@ def test_results_md_source_summary_shows_blocked_citilink(tmp_path, monkeypatch)
     )
 
     content = Path("results.md").read_text(encoding="utf-8")
-    assert "| Ситилинк | unavailable | 0 | 0 | blocked: 429 too many requests; warnings: Citilink access blocked. Manual verification required. |" in content
+    assert "| Ситилинк | unavailable | 0 | 0 | blocked: 429 too many requests | Citilink access blocked. Manual verification required. |" in content
     assert "| Ситилинк | 0 | 0 |" not in content
 
 
@@ -598,9 +632,9 @@ def test_notify_telegram_includes_source_summary(monkeypatch):
 
     text = payload["text"]
     assert "Source summary:" in text
-    assert "DNS: available; raw 10; filtered 2; ok" in text
-    assert "Ситилинк: available; raw 8; filtered 1; ok" in text
-    assert "Регард: available; raw 7; filtered 1; ok" in text
+    assert "DNS: ok; raw 10; filtered 2; reason: ok; warnings: none" in text
+    assert "Ситилинк: ok; raw 8; filtered 1; reason: ok; warnings: none" in text
+    assert "Регард: ok; raw 7; filtered 1; reason: ok; warnings: none" in text
 
 
 def test_notify_telegram_source_summary_shows_blocked_dns(monkeypatch):
@@ -634,9 +668,9 @@ def test_notify_telegram_source_summary_shows_blocked_dns(monkeypatch):
     )
 
     text = payload["text"]
-    assert "DNS: unavailable; raw 0; filtered 0; blocked: 403 forbidden; warnings: DNS access forbidden. Manual verification required." in text
+    assert "DNS: unavailable; raw 0; filtered 0; reason: blocked: 403 forbidden; warnings: DNS access forbidden. Manual verification required." in text
     assert "DNS: raw 0 / filtered 0" not in text
-    assert "Ситилинк: available; raw 8; filtered 1; ok" in text
+    assert "Ситилинк: ok; raw 8; filtered 1; reason: ok; warnings: none" in text
 
 
 def test_notify_telegram_source_summary_shows_blocked_citilink(monkeypatch):
@@ -669,7 +703,7 @@ def test_notify_telegram_source_summary_shows_blocked_citilink(monkeypatch):
     )
 
     text = payload["text"]
-    assert "Ситилинк: unavailable; raw 0; filtered 0; blocked: 429 too many requests; warnings: Citilink access blocked. Manual verification required." in text
+    assert "Ситилинк: unavailable; raw 0; filtered 0; reason: blocked: 429 too many requests; warnings: Citilink access blocked. Manual verification required." in text
     assert "Ситилинк: raw 0 / filtered 0" not in text
 
 
@@ -724,7 +758,7 @@ def test_notify_telegram_daily_report_includes_best_price(monkeypatch):
     assert "Best overall price:" in text
     assert "94800 RUB - DNS" in text
     assert "RTX 5070 Ti cheapest" in text
-    assert "Ситилинк: available; raw 2; filtered 2; ok" in text
+    assert "Ситилинк: ok; raw 2; filtered 2; reason: ok; warnings: none" in text
 
 
 def test_notify_telegram_daily_report_handles_no_offers(monkeypatch):

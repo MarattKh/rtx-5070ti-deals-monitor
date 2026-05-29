@@ -224,49 +224,76 @@ def render_markdown(offers: list[ProductOffer], config: dict[str, int] | None = 
     return "\n".join(lines) + "\n"
 
 
-def _warnings_text(stat: dict[str, Any]) -> str:
+def _warnings_list(stat: dict[str, Any]) -> list[str]:
     warnings = stat.get("warnings", [])
     if isinstance(warnings, list):
-        return "; ".join(str(x) for x in warnings if x)
-    return str(warnings) if warnings else ""
+        return [str(x) for x in warnings if x]
+    if warnings:
+        return [str(warnings)]
+    return []
 
 
 def _markdown_cell(value: Any) -> str:
     return str(value).replace("|", "/") if value is not None else ""
 
 
-def _source_health_status(stat: dict[str, Any]) -> str:
+def classify_source_stat(stat: dict[str, Any]) -> str:
+    """Classify one source stats record from the daily monitor run."""
+    if stat.get("error"):
+        return "error"
     if stat.get("blocked") is True:
         return "unavailable"
-    if stat.get("error") or _warnings_text(stat):
-        return "limited"
-    return "available"
+    if int(stat.get("filtered_count") or 0) <= 0:
+        return "no_filtered_offers"
+    return "ok"
 
 
-def _source_health_details(stat: dict[str, Any]) -> str:
-    details = []
-    if stat.get("blocked") is True:
-        details.append(f"blocked: {stat.get('block_reason') or 'unknown'}")
-    if stat.get("error"):
-        details.append(f"error: {stat['error']}")
-    warnings = _warnings_text(stat)
-    if warnings:
-        details.append(f"warnings: {warnings}")
-    return "; ".join(details) if details else "ok"
+def summarize_source_stat(stat: dict[str, Any]) -> dict[str, Any]:
+    """Return the compact review summary for one source stats record."""
+    classification = classify_source_stat(stat)
+    raw_count = int(stat.get("raw_count") or 0)
+    filtered_count = int(stat.get("filtered_count") or 0)
+
+    if classification == "error":
+        reason = str(stat.get("error"))
+    elif classification == "unavailable":
+        reason = f"blocked: {stat.get('block_reason') or 'unknown'}"
+    elif classification == "no_filtered_offers":
+        reason = "raw offers did not pass filters" if raw_count else "no offers after parsing"
+    else:
+        reason = "ok"
+
+    return {
+        "source": str(stat.get("source") or "unknown"),
+        "classification": classification,
+        "raw_count": raw_count,
+        "filtered_count": filtered_count,
+        "reason": reason,
+        "warnings": _warnings_list(stat),
+    }
+
+
+def summarize_source_stats(source_stats: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [summarize_source_stat(stat) for stat in source_stats]
 
 
 def _format_source_summary_text(stat: dict[str, Any]) -> str:
+    summary = summarize_source_stat(stat)
+    warnings = "; ".join(summary["warnings"]) if summary["warnings"] else "none"
     return (
-        f"{stat['source']}: {_source_health_status(stat)}; "
-        f"raw {stat['raw_count']}; filtered {stat['filtered_count']}; "
-        f"{_source_health_details(stat)}"
+        f"{summary['source']}: {summary['classification']}; "
+        f"raw {summary['raw_count']}; filtered {summary['filtered_count']}; "
+        f"reason: {summary['reason']}; warnings: {warnings}"
     )
 
 
 def _format_source_summary_markdown_row(stat: dict[str, Any]) -> str:
+    summary = summarize_source_stat(stat)
+    warnings = "; ".join(summary["warnings"]) if summary["warnings"] else "none"
     return (
-        f"| {_markdown_cell(stat['source'])} | {_source_health_status(stat)} | "
-        f"{stat['raw_count']} | {stat['filtered_count']} | {_markdown_cell(_source_health_details(stat))} |"
+        f"| {_markdown_cell(summary['source'])} | {summary['classification']} | "
+        f"{summary['raw_count']} | {summary['filtered_count']} | "
+        f"{_markdown_cell(summary['reason'])} | {_markdown_cell(warnings)} |"
     )
 
 
@@ -324,8 +351,8 @@ def render_results_markdown(offers: list[ProductOffer], source_stats: list[dict[
             "",
             "## Source summary",
             "",
-            "| Source | Status | Raw offers | Filtered offers | Details |",
-            "|---|---|---:|---:|---|",
+            "| Source | Classification | Raw offers | Filtered offers | Reason | Warnings |",
+            "|---|---|---:|---:|---|---|",
         ]
     )
 
@@ -587,11 +614,7 @@ def main() -> None:
 
     print("Source summary:")
     for stat in source_stats:
-        error_suffix = f" (error: {stat['error']})" if stat["error"] else ""
-        if stat.get("blocked") is True:
-            print(_format_source_summary_text(stat))
-        else:
-            print(f"{_format_source_summary_text(stat)}{error_suffix}")
+        print(_format_source_summary_text(stat))
 
     print(f"Total offers after filter: {len(filtered)}")
 
