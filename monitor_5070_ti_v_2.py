@@ -568,6 +568,37 @@ def run_source_with_status(name: str, fn) -> tuple[dict[str, Any], str]:
         return {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 1}, str(exc)
 
 
+BROWSER_FALLBACK_NO_OFFERS_WARNING = "Browser fallback produced no offers."
+
+
+def apply_browser_fallback_if_blocked(
+    name: str,
+    module: Any,
+    status: dict[str, Any],
+    error: str,
+    browser_already_enabled: bool,
+) -> tuple[dict[str, Any], str]:
+    if browser_already_enabled or not status.get("blocked"):
+        return status, error
+
+    fallback_status, fallback_error = run_source_with_status(
+        name,
+        lambda m=module: m.parse_offers_with_status(browser_mode=True),
+    )
+    if fallback_status.get("offers"):
+        return fallback_status, fallback_error
+
+    warnings = list(status.get("warnings") or [])
+    warnings.append(BROWSER_FALLBACK_NO_OFFERS_WARNING)
+    warnings.extend(fallback_status.get("warnings") or [])
+    if fallback_error:
+        warnings.append(f"Browser fallback failed: {fallback_error}")
+
+    merged_status = dict(status)
+    merged_status["warnings"] = warnings
+    return merged_status, error
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--browser", action="store_true", help="Use Playwright browser mode for DNS and Ситилинк")
@@ -588,6 +619,7 @@ def main() -> None:
         status: dict[str, Any] = {}
         if module in (dns, citilink) and hasattr(module, "parse_offers_with_status"):
             status, error = run_source_with_status(name, lambda m=module: m.parse_offers_with_status(browser_mode=args.browser))
+            status, error = apply_browser_fallback_if_blocked(name, module, status, error, args.browser)
             source_offers = list(status.get("offers", []))
         elif module in (dns, citilink):
             source_offers, error = run_source(name, lambda m=module: m.parse_offers(browser_mode=args.browser))

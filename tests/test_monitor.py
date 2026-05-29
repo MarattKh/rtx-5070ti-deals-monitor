@@ -800,6 +800,117 @@ def test_daily_report_cli_flag_passed_to_notify(monkeypatch):
 
     assert captured["daily_report"] is True
 
+
+def test_main_retries_blocked_dns_with_browser_fallback_success(monkeypatch):
+    import monitor_5070_ti_v_2 as mon
+
+    calls = []
+    captured = {}
+    fallback_offer = mk_offer("RTX 5070 Ti browser offer", price=90000)
+
+    def fake_dns(browser_mode=False):
+        calls.append(browser_mode)
+        if browser_mode:
+            return {"offers": [fallback_offer], "blocked": False, "block_reason": None, "warnings": ["browser ok"], "errors": 0}
+        return {"offers": [], "blocked": True, "block_reason": "401 unauthorized", "warnings": ["DNS blocked"], "errors": 0}
+
+    monkeypatch.setattr(mon, "configure_logging", lambda: None)
+    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None: captured.update({"offers": offers, "source_stats": source_stats}))
+    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: None)
+    monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
+    monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
+    monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
+    monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py"])
+
+    mon.main()
+
+    dns_stat = captured["source_stats"][0]
+    assert calls == [False, True]
+    assert captured["offers"] == [fallback_offer]
+    assert dns_stat["raw_count"] == 1
+    assert dns_stat["blocked"] is False
+    assert dns_stat["block_reason"] is None
+    assert dns_stat["warnings"] == ["browser ok"]
+
+
+def test_main_preserves_original_block_when_browser_fallback_has_no_offers(monkeypatch):
+    import monitor_5070_ti_v_2 as mon
+
+    calls = []
+    captured = {}
+
+    def fake_dns(browser_mode=False):
+        calls.append(browser_mode)
+        if browser_mode:
+            return {"offers": [], "blocked": False, "block_reason": None, "warnings": ["browser empty"], "errors": 0}
+        return {"offers": [], "blocked": True, "block_reason": "401 unauthorized", "warnings": ["DNS blocked"], "errors": 0}
+
+    monkeypatch.setattr(mon, "configure_logging", lambda: None)
+    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None: captured.update({"offers": offers, "source_stats": source_stats}))
+    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: None)
+    monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
+    monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
+    monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
+    monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py"])
+
+    mon.main()
+
+    dns_stat = captured["source_stats"][0]
+    assert calls == [False, True]
+    assert captured["offers"] == []
+    assert dns_stat["raw_count"] == 0
+    assert dns_stat["blocked"] is True
+    assert dns_stat["block_reason"] == "401 unauthorized"
+    assert dns_stat["warnings"] == ["DNS blocked", mon.BROWSER_FALLBACK_NO_OFFERS_WARNING, "browser empty"]
+
+
+def test_main_does_not_retry_when_browser_mode_was_requested(monkeypatch):
+    import monitor_5070_ti_v_2 as mon
+
+    calls = []
+    captured = {}
+
+    def fake_dns(browser_mode=False):
+        calls.append(browser_mode)
+        return {"offers": [], "blocked": True, "block_reason": "browser blocked", "warnings": ["still blocked"], "errors": 0}
+
+    monkeypatch.setattr(mon, "configure_logging", lambda: None)
+    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None: captured.update({"source_stats": source_stats}))
+    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: None)
+    monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
+    monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
+    monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
+    monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py", "--browser"])
+
+    mon.main()
+
+    dns_stat = captured["source_stats"][0]
+    assert calls == [True]
+    assert dns_stat["blocked"] is True
+    assert dns_stat["warnings"] == ["still blocked"]
+
+
+def test_browser_fallback_exception_is_kept_as_warning(monkeypatch):
+    import types
+    import monitor_5070_ti_v_2 as mon
+
+    def fake_parse_offers_with_status(browser_mode=False):
+        raise RuntimeError("chromium unavailable")
+
+    original_status = {"offers": [], "blocked": True, "block_reason": "429 too many requests", "warnings": ["Citilink blocked"], "errors": 0}
+    module = types.SimpleNamespace(parse_offers_with_status=fake_parse_offers_with_status)
+
+    status, error = mon.apply_browser_fallback_if_blocked("Citilink", module, original_status, "", False)
+
+    assert error == ""
+    assert status["blocked"] is True
+    assert status["block_reason"] == "429 too many requests"
+    assert status["warnings"] == [
+        "Citilink blocked",
+        mon.BROWSER_FALLBACK_NO_OFFERS_WARNING,
+        "Browser fallback failed: chromium unavailable",
+    ]
+
 def test_load_config_defaults_when_missing(tmp_path):
     import monitor_5070_ti_v_2 as mon
 
