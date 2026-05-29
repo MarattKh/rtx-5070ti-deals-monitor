@@ -34,7 +34,7 @@
     },
     {
       "id": "stage_1o_queue_state_hygiene",
-      "status": "pending",
+      "status": "completed",
       "task": "tools/agent_tasks/stage_1o_queue_state_hygiene.md",
       "branch": "agent/stage-1o-queue-state-hygiene",
       "pr_title": "Add agent queue status helper",
@@ -42,7 +42,7 @@
     },
     {
       "id": "stage_1o_price_history_summary",
-      "status": "pending",
+      "status": "completed",
       "task": "tools/agent_tasks/stage_1o_price_history_summary.md",
       "branch": "agent/stage-1o-price-history-summary",
       "pr_title": "Add price history summary helper",
