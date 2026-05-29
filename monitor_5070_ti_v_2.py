@@ -41,6 +41,24 @@ DEFAULT_CONFIG = {
 
 PRICE_HISTORY_PATH = Path("price_history.jsonl")
 
+ENABLED_SOURCES: tuple[tuple[str, Any], ...] = (
+    ("DNS", dns),
+    ("Ситилинк", citilink),
+    ("Регард", regard),
+    ("М.Видео", mvideo),
+    ("Эльдорадо", eldorado),
+    ("Wildberries", wildberries),
+    ("Мегамаркет", megamarket),
+    ("AliExpress", aliexpress),
+    ("ComputerUniverse", computeruniverse),
+    ("СДЭК Shopping", cdek_shopping),
+    ("Ozon", ozon),
+    ("Яндекс Маркет", yandex_market),
+    ("Avito", avito),
+)
+
+STATUS_AWARE_SOURCE_NAMES = {"DNS", "Ситилинк"}
+
 
 def load_config(path: str | Path = "config.json") -> dict[str, int]:
     config = DEFAULT_CONFIG.copy()
@@ -607,21 +625,16 @@ def main() -> None:
 
     configure_logging()
     config = load_config()
-    sources = {
-        "DNS": dns,
-        "Ситилинк": citilink,
-        "Регард": regard,
-    }
     collected: list[ProductOffer] = []
     source_stats: list[dict[str, Any]] = []
 
-    for name, module in sources.items():
+    for name, module in ENABLED_SOURCES:
         status: dict[str, Any] = {}
-        if module in (dns, citilink) and hasattr(module, "parse_offers_with_status"):
+        if name in STATUS_AWARE_SOURCE_NAMES and hasattr(module, "parse_offers_with_status"):
             status, error = run_source_with_status(name, lambda m=module: m.parse_offers_with_status(browser_mode=args.browser))
             status, error = apply_browser_fallback_if_blocked(name, module, status, error, args.browser)
             source_offers = list(status.get("offers", []))
-        elif module in (dns, citilink):
+        elif name in STATUS_AWARE_SOURCE_NAMES:
             source_offers, error = run_source(name, lambda m=module: m.parse_offers(browser_mode=args.browser))
         else:
             source_offers, error = run_source(name, module)

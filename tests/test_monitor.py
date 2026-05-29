@@ -14,6 +14,10 @@ def mk_offer(title: str, raw: str = "", price: float = 100000, url: str = "https
     return ProductOffer("DNS", title, price, "RUB", url, "new", "DNS", "in_stock", "2026-01-01T00:00:00+00:00", 0.9, raw)
 
 
+def set_enabled_sources(monkeypatch, mon, sources):
+    monkeypatch.setattr(mon, "ENABLED_SOURCES", tuple(sources))
+
+
 def test_accepts_rtx_5070_ti():
     offers = filter_offers([mk_offer("NVIDIA GeForce RTX 5070 Ti")])
     assert len(offers) == 1
@@ -794,6 +798,7 @@ def test_daily_report_cli_flag_passed_to_notify(monkeypatch):
     monkeypatch.setattr(mon.dns, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
     monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
     monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
+    set_enabled_sources(monkeypatch, mon, (("DNS", mon.dns), ("Ситилинк", mon.citilink), ("Регард", mon.regard)))
     monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py", "--browser", "--daily-report"])
 
     mon.main()
@@ -820,6 +825,7 @@ def test_main_retries_blocked_dns_with_browser_fallback_success(monkeypatch):
     monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
     monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
     monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
+    set_enabled_sources(monkeypatch, mon, (("DNS", mon.dns), ("Ситилинк", mon.citilink), ("Регард", mon.regard)))
     monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py"])
 
     mon.main()
@@ -851,6 +857,7 @@ def test_main_preserves_original_block_when_browser_fallback_has_no_offers(monke
     monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
     monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
     monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
+    set_enabled_sources(monkeypatch, mon, (("DNS", mon.dns), ("Ситилинк", mon.citilink), ("Регард", mon.regard)))
     monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py"])
 
     mon.main()
@@ -880,6 +887,7 @@ def test_main_does_not_retry_when_browser_mode_was_requested(monkeypatch):
     monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
     monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
     monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
+    set_enabled_sources(monkeypatch, mon, (("DNS", mon.dns), ("Ситилинк", mon.citilink), ("Регард", mon.regard)))
     monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py", "--browser"])
 
     mon.main()
@@ -909,6 +917,61 @@ def test_browser_fallback_exception_is_kept_as_warning(monkeypatch):
         "Citilink blocked",
         mon.BROWSER_FALLBACK_NO_OFFERS_WARNING,
         "Browser fallback failed: chromium unavailable",
+    ]
+
+
+def test_enabled_sources_include_existing_retailer_modules():
+    import monitor_5070_ti_v_2 as mon
+
+    sources = dict(mon.ENABLED_SOURCES)
+
+    assert sources["DNS"] is mon.dns
+    assert sources["Ситилинк"] is mon.citilink
+    assert sources["Регард"] is mon.regard
+    assert sources["М.Видео"] is mon.mvideo
+    assert sources["Эльдорадо"] is mon.eldorado
+    assert sources["Wildberries"] is mon.wildberries
+    assert sources["Мегамаркет"] is mon.megamarket
+    assert sources["AliExpress"] is mon.aliexpress
+    assert sources["ComputerUniverse"] is mon.computeruniverse
+    assert sources["СДЭК Shopping"] is mon.cdek_shopping
+    assert sources["Ozon"] is mon.ozon
+    assert sources["Яндекс Маркет"] is mon.yandex_market
+    assert sources["Avito"] is mon.avito
+
+
+def test_main_attempts_multiple_existing_sources_and_isolates_failures(monkeypatch):
+    import types
+    import monitor_5070_ti_v_2 as mon
+
+    calls = []
+    captured = {}
+    working_offer = mk_offer("RTX 5070 Ti working", price=89000)
+
+    def working_parse():
+        calls.append("working")
+        return [working_offer]
+
+    def failing_parse():
+        calls.append("failing")
+        raise RuntimeError("shop down")
+
+    working_source = types.SimpleNamespace(parse_offers=working_parse)
+    failing_source = types.SimpleNamespace(parse_offers=failing_parse)
+
+    monkeypatch.setattr(mon, "configure_logging", lambda: None)
+    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None: captured.update({"offers": offers, "source_stats": source_stats}))
+    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: None)
+    set_enabled_sources(monkeypatch, mon, (("М.Видео", working_source), ("Эльдорадо", failing_source)))
+    monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py"])
+
+    mon.main()
+
+    assert calls == ["working", "failing"]
+    assert captured["offers"] == [working_offer]
+    assert captured["source_stats"] == [
+        {"source": "М.Видео", "raw_count": 1, "filtered_count": 1, "error": "", "blocked": False, "block_reason": None, "warnings": []},
+        {"source": "Эльдорадо", "raw_count": 0, "filtered_count": 0, "error": "shop down", "blocked": False, "block_reason": None, "warnings": []},
     ]
 
 def test_load_config_defaults_when_missing(tmp_path):
