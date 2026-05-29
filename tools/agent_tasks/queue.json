@@ -50,7 +50,7 @@
     },
     {
       "id": "stage_1o_source_status_regression",
-      "status": "pending",
+      "status": "completed",
       "task": "tools/agent_tasks/stage_1o_source_status_regression.md",
       "branch": "agent/stage-1o-source-status-regression",
       "pr_title": "Strengthen source status tests",
