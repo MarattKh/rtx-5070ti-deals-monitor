@@ -1,4 +1,7 @@
 from pathlib import Path
+from urllib.error import HTTPError
+
+import pytest
 
 from monitor_5070_ti_v_2 import filter_offers, get_signal_label
 from models import ProductOffer
@@ -152,6 +155,35 @@ def test_results_md_contains_summary_and_source_summary(tmp_path, monkeypatch):
     assert "| DNS | 3 | 1 |  |" in content
 
 
+@pytest.mark.parametrize("reason", ["401 unauthorized", "403 forbidden", "429 too many requests"])
+def test_source_summary_formats_blocked_status_instead_of_empty_counts(reason):
+    import monitor_5070_ti_v_2 as mon
+
+    stat = {
+        "source": "ExampleShop",
+        "raw_count": 0,
+        "filtered_count": 0,
+        "error": "",
+        "blocked": True,
+        "block_reason": reason,
+        "warnings": ["Manual verification required."],
+    }
+
+    assert mon._format_source_summary_text(stat) == f"ExampleShop: blocked / {reason}"
+    assert mon._format_source_summary_markdown_row(stat) == f"| ExampleShop | blocked | {reason} | Manual verification required. |"
+    assert "raw 0 / filtered 0" not in mon._format_source_summary_text(stat)
+    assert "| ExampleShop | 0 | 0 |" not in mon._format_source_summary_markdown_row(stat)
+
+
+def test_source_summary_formats_successful_counts():
+    import monitor_5070_ti_v_2 as mon
+
+    stat = {"source": "ExampleShop", "raw_count": 3, "filtered_count": 1, "error": ""}
+
+    assert mon._format_source_summary_text(stat) == "ExampleShop: raw 3 / filtered 1"
+    assert mon._format_source_summary_markdown_row(stat) == "| ExampleShop | 3 | 1 |  |"
+
+
 def test_results_md_source_summary_shows_blocked_dns(tmp_path, monkeypatch):
     import monitor_5070_ti_v_2 as mon
 
@@ -276,6 +308,31 @@ def test_dns_parse_offers_with_status_treats_401_as_blocked(monkeypatch):
     assert result["offers"] == []
 
 
+@pytest.mark.parametrize(
+    ("status_code", "reason"),
+    [
+        (401, "401 unauthorized"),
+        (403, "403 forbidden"),
+    ],
+)
+def test_dns_http_blocked_statuses_are_not_empty_successes(monkeypatch, status_code, reason):
+    from parsers import dns
+
+    def raise_http_error(url):
+        raise HTTPError(url, status_code, reason, hdrs=None, fp=None)
+
+    monkeypatch.setattr(dns, "_download", raise_http_error)
+
+    result = dns.parse_offers_with_status()
+
+    assert result == {
+        "offers": [],
+        "blocked": True,
+        "block_reason": reason,
+        "warnings": ["DNS access forbidden. Manual verification required."],
+        "errors": 1,
+    }
+
 def test_regard_fixture_card_parsing_and_filtering():
     html = Path("tests/fixtures/regard_search.html").read_text(encoding="utf-8")
     cards = parse_regard_cards(html)
@@ -318,6 +375,47 @@ def test_citilink_parse_offers_with_status_treats_429_as_blocked(monkeypatch):
     assert result["offers"] == []
     assert citilink.parse_offers() == []
 
+
+@pytest.mark.parametrize(
+    ("status_code", "reason"),
+    [
+        (401, "401 unauthorized"),
+        (403, "403 forbidden"),
+        (429, "429 too many requests"),
+    ],
+)
+def test_citilink_http_blocked_statuses_are_not_empty_successes(monkeypatch, status_code, reason):
+    from parsers import citilink
+
+    def raise_http_error(url):
+        raise HTTPError(url, status_code, reason, hdrs=None, fp=None)
+
+    monkeypatch.setattr(citilink, "_download", raise_http_error)
+
+    result = citilink.parse_offers_with_status()
+
+    assert result == {
+        "offers": [],
+        "blocked": True,
+        "block_reason": reason,
+        "warnings": ["Citilink access blocked. Manual verification required."],
+        "errors": 1,
+    }
+
+
+def test_citilink_parse_offers_with_status_reports_successful_counts_input(monkeypatch):
+    from parsers import citilink
+
+    html = Path("tests/fixtures/citilink_search.html").read_text(encoding="utf-8")
+    monkeypatch.setattr(citilink, "_download", lambda url: html)
+
+    result = citilink.parse_offers_with_status()
+
+    assert result["blocked"] is False
+    assert result["block_reason"] is None
+    assert result["warnings"] == []
+    assert result["errors"] == 0
+    assert len(result["offers"]) == 3
 
 def test_citilink_parse_offers_with_status_detects_blocked_html(monkeypatch):
     from parsers import citilink
