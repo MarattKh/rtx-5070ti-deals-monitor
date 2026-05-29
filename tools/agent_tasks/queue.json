@@ -135,6 +135,14 @@
       "branch": "agent/stage-2b-browser-fallback",
       "pr_title": "Add browser fallback for blocked RTX sources",
       "pr_body": "Retry blocked DNS and Citilink sources once with browser mode while preserving clear source status."
+    },
+    {
+      "id": "stage_2b_enable_existing_sources",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_2b_enable_existing_sources.md",
+      "branch": "agent/stage-2b-enable-existing-sources",
+      "pr_title": "Enable existing RTX retailer sources",
+      "pr_body": "Wire existing retailer parser modules into the daily monitor while preserving per-source failure isolation."
     }
   ]
 }
