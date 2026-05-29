@@ -183,6 +183,11 @@ def test_build_agent_run_command_includes_task_branch_pr_and_dry_run():
         "tools/agent_run.py",
         "tools/agent_cycle.py",
         "tools/agent_tasks/queue.json",
+        "config.json",
+        "config.example.json",
+        "run_monitor.bat",
+        "run_daily_report.bat",
+        "run_monitor_browser.bat",
         "config.env",
         "secrets/token.txt",
         "scheduler/install.ps1",
@@ -198,6 +203,48 @@ def test_dangerous_path_detection_denies_sensitive_paths(path):
 def test_dangerous_path_detection_allows_normal_application_files():
     assert agent_cycle.is_dangerous_path("parsers/citilink.py") is False
     assert agent_cycle.is_dangerous_path("tests/test_monitor.py") is False
+
+
+def test_auto_merge_decision_allows_docs_only_pr():
+    pr = {"number": 3, "url": "https://github.test/pull/3", "state": "OPEN", "mergeable": "MERGEABLE"}
+
+    assert agent_cycle.evaluate_auto_merge(pr, ["README.md", "docs/agent-runbook.md"]) == (
+        True,
+        "safe to merge",
+    )
+
+
+def test_auto_merge_decision_allows_tests_only_pr():
+    pr = {"number": 3, "url": "https://github.test/pull/3", "state": "OPEN", "mergeable": "MERGEABLE"}
+
+    assert agent_cycle.evaluate_auto_merge(pr, ["tests/test_agent_cycle.py", "test_parser.py"]) == (
+        True,
+        "safe to merge",
+    )
+
+
+def test_auto_merge_decision_allows_existing_parser_test_safe_pattern():
+    pr = {"number": 3, "url": "https://github.test/pull/3", "state": "OPEN", "mergeable": "MERGEABLE"}
+
+    assert agent_cycle.evaluate_auto_merge(pr, ["parsers/citilink.py", "tests/test_monitor.py"]) == (
+        True,
+        "safe to merge",
+    )
+
+
+def test_auto_merge_decision_requires_review_for_agent_infrastructure_and_queue():
+    pr = {"number": 3, "url": "https://github.test/pull/3", "state": "OPEN", "mergeable": "MERGEABLE"}
+
+    allowed, reason = agent_cycle.evaluate_auto_merge(
+        pr,
+        ["tools/agent_cycle.py", "tools/agent_run.py", "tools/agent_tasks/queue.json"],
+    )
+
+    assert allowed is False
+    assert "dangerous files changed" in reason
+    assert "tools/agent_cycle.py" in reason
+    assert "tools/agent_run.py" in reason
+    assert "tools/agent_tasks/queue.json" in reason
 
 
 def test_auto_merge_decision_requires_open_mergeable_pr_and_safe_paths():

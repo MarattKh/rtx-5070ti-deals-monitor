@@ -37,6 +37,11 @@ TERMINAL_RUNTIME_STATUSES = {
 }
 
 DANGEROUS_EXACT_PATHS = {
+    "config.example.json",
+    "config.json",
+    "run_daily_report.bat",
+    "run_monitor.bat",
+    "run_monitor_browser.bat",
     "tools/agent_run.py",
     "tools/agent_cycle.py",
     "tools/agent_tasks/queue.json",
@@ -48,6 +53,12 @@ DANGEROUS_EXACT_PATHS = {
 }
 DANGEROUS_DIR_PREFIXES = (".github/", "scheduler/", "system/")
 DANGEROUS_PATH_MARKERS = ("secret", "env", "token", "credential", "key")
+SAFE_DOC_EXACT_PATHS = {"readme.md"}
+SAFE_DOC_DIR_PREFIXES = ("docs/", "doc/")
+SAFE_DOC_SUFFIXES = (".md", ".rst", ".txt")
+SAFE_TEST_DIR_PREFIXES = ("tests/", "test/")
+SAFE_TEST_NAME_PREFIXES = ("test_",)
+SAFE_TEST_NAME_SUFFIXES = ("_test.py",)
 
 
 class CycleError(RuntimeError):
@@ -320,6 +331,31 @@ def is_dangerous_path(path: str, *, allow_dependency_files: bool = False) -> boo
     return False
 
 
+def is_documentation_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+
+    if normalized in SAFE_DOC_EXACT_PATHS:
+        return True
+    return normalized.startswith(SAFE_DOC_DIR_PREFIXES) and normalized.endswith(SAFE_DOC_SUFFIXES)
+
+
+def is_test_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    name = Path(normalized).name
+
+    if normalized.startswith(SAFE_TEST_DIR_PREFIXES):
+        return True
+    return name.startswith(SAFE_TEST_NAME_PREFIXES) or name.endswith(SAFE_TEST_NAME_SUFFIXES)
+
+
+def is_low_risk_auto_merge_path(path: str) -> bool:
+    return is_documentation_path(path) or is_test_path(path)
+
+
 def evaluate_auto_merge(
     pr: dict[str, Any] | None,
     changed_files: list[str],
@@ -336,6 +372,8 @@ def evaluate_auto_merge(
     dangerous = [path for path in changed_files if is_dangerous_path(path, allow_dependency_files=allow_dependency_files)]
     if dangerous:
         return False, "dangerous files changed: " + ", ".join(dangerous)
+    if changed_files and all(is_low_risk_auto_merge_path(path) for path in changed_files):
+        return True, "safe to merge"
     return True, "safe to merge"
 
 
@@ -606,6 +644,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
 
