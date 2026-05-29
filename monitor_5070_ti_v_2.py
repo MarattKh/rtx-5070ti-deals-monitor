@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from models import ProductOffer
+from tools.offer_deduplication import deduplicate_offers
 
 from parsers import (
     aliexpress,
@@ -69,7 +70,6 @@ def load_config(path: str | Path = "config.json") -> dict[str, int]:
     return config
 
 
-
 def configure_logging() -> None:
     logging.basicConfig(
         filename="monitor.log",
@@ -118,6 +118,7 @@ def is_accessory_or_invalid(title: str, raw_text: str) -> bool:
         return True
 
     return any(keyword in haystack for keyword in bad_keywords)
+
 
 def filter_offers(offers: Iterable[ProductOffer], config: dict[str, int] | None = None) -> list[ProductOffer]:
     if config is None:
@@ -389,7 +390,7 @@ def save_reports(offers: list[ProductOffer], source_stats: list[dict[str, Any]] 
 
     with open("results.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(asdict(offers[0]).keys()) if offers else [
-            "source","title","price","currency","url","condition","seller","availability","checked_at","confidence","raw_text"
+            "source", "title", "price", "currency", "url", "condition", "seller", "availability", "checked_at", "confidence", "raw_text"
         ])
         w.writeheader()
         for x in offers:
@@ -608,7 +609,7 @@ def main() -> None:
             }
         )
 
-    filtered = filter_offers(collected, config)
+    filtered = deduplicate_offers(filter_offers(collected, config))
     save_reports(filtered, source_stats, config)
     notify_telegram(filtered, source_stats, daily_report=args.daily_report, config=config)
 
