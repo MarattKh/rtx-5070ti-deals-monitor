@@ -180,6 +180,41 @@ def ensure_clean_worktree(runner: CommandRunner) -> None:
         raise RunnerError("Working tree is not clean. Commit or stash changes before running the agent.")
 
 
+def local_branch_exists(runner: CommandRunner, branch: str) -> bool:
+    proc = runner.run(["git", "branch", "--list", "--format=%(refname:short)", branch], capture=True)
+    return branch in proc.stdout.splitlines()
+
+
+def unique_commit_count(runner: CommandRunner, branch: str) -> int:
+    proc = runner.run(["git", "rev-list", "--count", f"main..{branch}"], capture=True)
+    try:
+        return int(proc.stdout.strip())
+    except ValueError as exc:
+        raise RunnerError(f"Could not determine whether local branch {branch!r} has unique commits.") from exc
+
+
+def prepare_task_branch(runner: CommandRunner, branch: str) -> None:
+    if not local_branch_exists(runner, branch):
+        runner.run(["git", "checkout", "-b", branch], mutates=True)
+        return
+
+    unique_commits = unique_commit_count(runner, branch)
+    if unique_commits == 0:
+        runner.logger.write(
+            f"Local branch {branch!r} already exists but has no commits outside main; reusing it at main."
+        )
+        runner.run(["git", "checkout", branch], mutates=True)
+        runner.run(["git", "reset", "--hard", "main"], mutates=True)
+        return
+
+    raise RunnerError(
+        f"Local branch {branch!r} already exists and has {unique_commits} commit(s) not in main. "
+        "The agent will not overwrite possible unmerged work. Inspect it with "
+        f"`git log --oneline main..{branch}` and either merge it, rename it, or delete it after confirming "
+        f"it is safe with `git branch -D {branch}`."
+    )
+
+
 def has_changes(runner: CommandRunner) -> bool:
     proc = runner.run(["git", "status", "--porcelain"], capture=True)
     return bool(proc.stdout.strip())
@@ -218,7 +253,7 @@ def run_workflow(args: argparse.Namespace, runner: CommandRunner) -> None:
 
     runner.run(["git", "checkout", "main"], mutates=True)
     runner.run(["git", "pull", "--ff-only"], mutates=True)
-    runner.run(["git", "checkout", "-b", args.branch], mutates=True)
+    prepare_task_branch(runner, args.branch)
 
     runner.run([resolve_codex_executable(), "exec", "--profile", "agent"], input_text=task_text, mutates=True)
 
