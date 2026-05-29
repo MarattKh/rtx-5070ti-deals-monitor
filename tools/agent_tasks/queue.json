@@ -55,6 +55,46 @@
       "branch": "agent/stage-1o-source-status-regression",
       "pr_title": "Strengthen source status tests",
       "pr_body": "Add regression coverage for normal and unavailable retailer source status reporting."
+    },
+    {
+      "id": "stage_1p_terminal_state_selection",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_1p_terminal_state_selection.md",
+      "branch": "agent/stage-1p-terminal-state-selection",
+      "pr_title": "Skip terminal agent task states",
+      "pr_body": "Prevent scheduled cycles from rerunning tasks that already need review or failed."
+    },
+    {
+      "id": "stage_1p_safe_file_policy",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_1p_safe_file_policy.md",
+      "branch": "agent/stage-1p-safe-file-policy",
+      "pr_title": "Refine agent auto-merge file policy",
+      "pr_body": "Allow low-risk docs-only and tests-only PRs while keeping agent infrastructure protected."
+    },
+    {
+      "id": "stage_1p_pr_creation_recovery",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_1p_pr_creation_recovery.md",
+      "branch": "agent/stage-1p-pr-creation-recovery",
+      "pr_title": "Improve agent PR creation recovery",
+      "pr_body": "Make pushed work without a completed PR easier to detect and recover."
+    },
+    {
+      "id": "stage_1p_queue_completion_helper",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_1p_queue_completion_helper.md",
+      "branch": "agent/stage-1p-queue-completion-helper",
+      "pr_title": "Add agent queue completion helper",
+      "pr_body": "Add a helper to mark queue tasks completed after PR merge."
+    },
+    {
+      "id": "stage_1p_stale_branch_cleanup",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_1p_stale_branch_cleanup.md",
+      "branch": "agent/stage-1p-stale-branch-cleanup",
+      "pr_title": "Improve existing task branch recovery",
+      "pr_body": "Improve recovery when a local task branch already exists from an earlier interrupted run."
     }
   ]
 }
