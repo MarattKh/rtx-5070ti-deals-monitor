@@ -231,16 +231,43 @@ def _warnings_text(stat: dict[str, Any]) -> str:
     return str(warnings) if warnings else ""
 
 
-def _format_source_summary_text(stat: dict[str, Any]) -> str:
+def _markdown_cell(value: Any) -> str:
+    return str(value).replace("|", "/") if value is not None else ""
+
+
+def _source_health_status(stat: dict[str, Any]) -> str:
     if stat.get("blocked") is True:
-        return f"{stat['source']}: blocked / {stat.get('block_reason') or 'unknown'}"
-    return f"{stat['source']}: raw {stat['raw_count']} / filtered {stat['filtered_count']}"
+        return "unavailable"
+    if stat.get("error") or _warnings_text(stat):
+        return "limited"
+    return "available"
+
+
+def _source_health_details(stat: dict[str, Any]) -> str:
+    details = []
+    if stat.get("blocked") is True:
+        details.append(f"blocked: {stat.get('block_reason') or 'unknown'}")
+    if stat.get("error"):
+        details.append(f"error: {stat['error']}")
+    warnings = _warnings_text(stat)
+    if warnings:
+        details.append(f"warnings: {warnings}")
+    return "; ".join(details) if details else "ok"
+
+
+def _format_source_summary_text(stat: dict[str, Any]) -> str:
+    return (
+        f"{stat['source']}: {_source_health_status(stat)}; "
+        f"raw {stat['raw_count']}; filtered {stat['filtered_count']}; "
+        f"{_source_health_details(stat)}"
+    )
 
 
 def _format_source_summary_markdown_row(stat: dict[str, Any]) -> str:
-    if stat.get("blocked") is True:
-        return f"| {stat['source']} | blocked | {stat.get('block_reason') or 'unknown'} | {_warnings_text(stat)} |"
-    return f"| {stat['source']} | {stat['raw_count']} | {stat['filtered_count']} | {stat['error']} |"
+    return (
+        f"| {_markdown_cell(stat['source'])} | {_source_health_status(stat)} | "
+        f"{stat['raw_count']} | {stat['filtered_count']} | {_markdown_cell(_source_health_details(stat))} |"
+    )
 
 
 def render_results_markdown(offers: list[ProductOffer], source_stats: list[dict[str, Any]], config: dict[str, int] | None = None) -> str:
@@ -260,10 +287,10 @@ def render_results_markdown(offers: list[ProductOffer], source_stats: list[dict[
         f"- Checked at: {checked_at}",
         f"- Total offers after filter: {len(offers)}",
         f"- Min price: {min_price}",
-                f"- urgent_buy count: {urgent_count}",
+        f"- urgent_buy count: {urgent_count}",
         f"- good_price count: {good_price_count}",
         f"- normal count: {normal_count}",
-                f"- best offer: {offers[0].price:.0f} {offers[0].currency} | {offers[0].source} | {offers[0].title} | {offers[0].url}" if offers else "- best offer: n/a",
+        f"- best offer: {offers[0].price:.0f} {offers[0].currency} | {offers[0].source} | {offers[0].title} | {offers[0].url}" if offers else "- best offer: n/a",
         "",
         "## Config",
         "",
@@ -297,8 +324,8 @@ def render_results_markdown(offers: list[ProductOffer], source_stats: list[dict[
             "",
             "## Source summary",
             "",
-            "| Source | Raw count | Filtered count | Error |",
-            "|---|---:|---:|---|",
+            "| Source | Status | Raw offers | Filtered offers | Details |",
+            "|---|---|---:|---:|---|",
         ]
     )
 
@@ -309,9 +336,9 @@ def render_results_markdown(offers: list[ProductOffer], source_stats: list[dict[
         [
             "",
             "## Offers",
-"",
-"| Source | Title | Price | Condition | Availability | Signal | URL |",
-"|---|---|---:|---|---|---|---|",
+            "",
+            "| Source | Title | Price | Condition | Availability | Signal | URL |",
+            "|---|---|---:|---|---|---|---|",
         ]
     )
 
@@ -367,8 +394,8 @@ def _telegram_signal_offers(offers: list[ProductOffer], config: dict[str, int] |
     return interesting
 
 
-def _append_source_summary(lines: list[str], source_stats: list[dict[str, Any]]) -> None:
-    lines.append("Source summary:")
+def _append_source_summary(lines: list[str], source_stats: list[dict[str, Any]], heading: str = "Source summary:") -> None:
+    lines.append(heading)
     if source_stats:
         for stat in source_stats:
             lines.append(_format_source_summary_text(stat))
@@ -413,37 +440,45 @@ def build_telegram_daily_report_text(offers: list[ProductOffer], source_stats: l
         config = load_config()
 
     signals = _telegram_signal_offers(offers, config)
-    lines = ["📊 RTX 5070 Ti daily report", "", f"Signals: {len(signals)}", f"Thresholds: good <= {config['new_good_price']} RUB, urgent <= {config['new_urgent_buy']} RUB"]
+    lines = [
+        "📊 RTX 5070 Ti daily report",
+        "",
+        "Signals:",
+        f"- total: {len(signals)}",
+        f"- thresholds: good <= {config['new_good_price']} RUB, urgent <= {config['new_urgent_buy']} RUB",
+    ]
 
     if signals:
         lines.extend(["", "Best signals:"])
         for idx, offer in enumerate(signals[:10], start=1):
             lines.extend(
                 [
-                    f"{idx}. {get_signal_label(offer)} — {offer.price:.0f} RUB — {offer.source}",
+                    f"{idx}. {get_signal_label(offer)} - {offer.price:.0f} RUB - {offer.source}",
                     offer.title,
                     offer.url,
                     "",
                 ]
             )
+    else:
+        lines.extend(["", "Best signals: n/a", ""])
 
     if offers:
         best = offers[0]
         lines.extend(
             [
-                "Best price:",
-                f"{best.price:.0f} {best.currency} — {best.source}",
+                "Best overall price:",
+                f"{best.price:.0f} {best.currency} - {best.source}",
                 best.title,
                 best.url,
                 "",
             ]
         )
     else:
-        lines.extend(["", "Best price: n/a", ""])
+        lines.extend(["Best overall price: n/a", ""])
 
-    _append_source_summary(lines, source_stats)
+    _append_source_summary(lines, source_stats, heading="Source health:")
     lines.append("")
-    lines.append(f"Total offers: {len(offers)}")
+    lines.append(f"Total filtered offers: {len(offers)}")
     return "\n".join(lines)[:4000]
 
 
