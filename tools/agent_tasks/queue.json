@@ -18,7 +18,7 @@
     },
     {
       "id": "stage_1o_agent_scheduler_runbook",
-      "status": "needs_review",
+      "status": "pending",
       "task": "tools/agent_tasks/stage_1o_agent_scheduler_runbook.md",
       "branch": "agent/stage-1o-agent-scheduler-runbook",
       "pr_title": "Add agent cycle scheduler runbook",
@@ -74,7 +74,7 @@
     },
     {
       "id": "stage_1p_pr_creation_recovery",
-      "status": "needs_review",
+      "status": "completed",
       "task": "tools/agent_tasks/stage_1p_pr_creation_recovery.md",
       "branch": "agent/stage-1p-pr-creation-recovery",
       "pr_title": "Improve agent PR creation recovery",
@@ -82,7 +82,7 @@
     },
     {
       "id": "stage_1p_queue_completion_helper",
-      "status": "needs_review",
+      "status": "completed",
       "task": "tools/agent_tasks/stage_1p_queue_completion_helper.md",
       "branch": "agent/stage-1p-queue-completion-helper",
       "pr_title": "Add agent queue completion helper",
@@ -114,7 +114,7 @@
     },
     {
       "id": "stage_2a_history_rotation",
-      "status": "needs_review",
+      "status": "completed",
       "task": "tools/agent_tasks/stage_2a_history_rotation.md",
       "branch": "agent/stage-2a-history-rotation",
       "pr_title": "Add price history maintenance helper",
@@ -130,7 +130,7 @@
     },
     {
       "id": "stage_2b_browser_fallback",
-      "status": "pending",
+      "status": "completed",
       "task": "tools/agent_tasks/stage_2b_browser_fallback.md",
       "branch": "agent/stage-2b-browser-fallback",
       "pr_title": "Add browser fallback for blocked RTX sources",
@@ -138,7 +138,7 @@
     },
     {
       "id": "stage_2b_enable_existing_sources",
-      "status": "pending",
+      "status": "completed",
       "task": "tools/agent_tasks/stage_2b_enable_existing_sources.md",
       "branch": "agent/stage-2b-enable-existing-sources",
       "pr_title": "Enable existing RTX retailer sources",
