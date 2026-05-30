@@ -10,6 +10,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import agent_cycle
+from tools.atomic_io import atomic_write_text
 
 
 class MarkCompletedError(RuntimeError):
@@ -50,7 +51,7 @@ def mark_completed(queue_doc: dict[str, Any], task_id: str) -> tuple[str, str]:
 
 
 def save_queue_document(path: Path, queue_doc: dict[str, Any]) -> None:
-    path.write_text(json.dumps(queue_doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(queue_doc, ensure_ascii=False, indent=2) + "\n")
 
 
 def complete_task(queue_path: Path, task_id: str, *, dry_run: bool = False) -> tuple[str, str]:

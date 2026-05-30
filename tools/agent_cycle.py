@@ -8,6 +8,7 @@ from typing import Any, Sequence
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools import agent_notify
+from tools.atomic_io import atomic_write_text
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_QUEUE_PATH = ROOT / "tools" / "agent_tasks" / "queue.json"
@@ -107,7 +108,7 @@ def load_state(path: Path) -> dict[str, Any]:
     return raw
 
 def save_state(path: Path, state: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True); path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(path, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
 
 def select_pending_tasks(queue: list[dict[str, Any]], state: dict[str, Any], max_tasks: int) -> list[dict[str, Any]]:
     stopped = {tid for tid, item in state.get("tasks", {}).items() if isinstance(item, dict) and item.get("status") in TERMINAL_RUNTIME_STATUSES}
