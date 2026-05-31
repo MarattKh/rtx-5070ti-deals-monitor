@@ -10,8 +10,8 @@ from parsers.dns import parse_cards as parse_dns_cards
 from parsers.regard import parse_cards as parse_regard_cards
 
 
-def mk_offer(title: str, raw: str = "", price: float = 100000, url: str = "https://example.com/product/1") -> ProductOffer:
-    return ProductOffer("DNS", title, price, "RUB", url, "new", "DNS", "in_stock", "2026-01-01T00:00:00+00:00", 0.9, raw)
+def mk_offer(title: str, raw: str = "", price: float = 100000, url: str = "https://example.com/product/1", source: str = "DNS") -> ProductOffer:
+    return ProductOffer(source, title, price, "RUB", url, "new", source, "in_stock", "2026-01-01T00:00:00+00:00", 0.9, raw)
 
 
 def set_enabled_sources(monkeypatch, mon, sources):
@@ -294,6 +294,39 @@ def test_no_search_urls_in_results():
     ]
     filtered = filter_offers(offers)
     assert all("/search" not in x.url and "?q=" not in x.url and "?text=" not in x.url for x in filtered)
+
+
+def test_yandex_market_offer_search_url_with_sku_passes_filter():
+    offer = mk_offer(
+        "Palit GeForce RTX 5070 Ti GamingPro",
+        price=99990,
+        url="https://market.yandex.ru/search?text=rtx%205070%20ti&sku=123456789&uniqueId=98765",
+        source="Yandex Market",
+    )
+
+    assert filter_offers([offer]) == [offer]
+
+
+def test_yandex_market_plain_search_and_catalog_urls_are_rejected():
+    offers = [
+        mk_offer(
+            "Palit GeForce RTX 5070 Ti GamingPro",
+            url="https://market.yandex.ru/search?text=rtx%205070%20ti",
+            source="Yandex Market",
+        ),
+        mk_offer(
+            "Palit GeForce RTX 5070 Ti GamingPro",
+            url="https://market.yandex.ru/catalog--videokarty/26912670/list?text=rtx%205070%20ti",
+            source="Yandex Market",
+        ),
+        mk_offer(
+            "Palit GeForce RTX 5070 Ti GamingPro",
+            url="https://shop.example/search?text=rtx%205070%20ti&sku=123456789",
+            source="Other Shop",
+        ),
+    ]
+
+    assert filter_offers(offers) == []
 
 
 def test_title_is_not_artificial():

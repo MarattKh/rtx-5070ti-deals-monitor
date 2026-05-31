@@ -9,6 +9,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import parse_qs, urlparse
 
 from models import ProductOffer
 from tools.offer_deduplication import deduplicate_offers
@@ -58,6 +59,7 @@ ENABLED_SOURCES: tuple[tuple[str, Any], ...] = (
 )
 
 STATUS_AWARE_SOURCE_NAMES = {"DNS", "Ситилинк"}
+YANDEX_MARKET_OFFER_QUERY_KEYS = {"sku", "offerid", "waremd5"}
 
 
 def load_config(path: str | Path = "config.json") -> dict[str, int]:
@@ -138,6 +140,29 @@ def is_accessory_or_invalid(title: str, raw_text: str) -> bool:
     return any(keyword in haystack for keyword in bad_keywords)
 
 
+def _is_yandex_market_offer_search_url(item: ProductOffer) -> bool:
+    source = item.source.casefold()
+    if "yandex market" not in source and "яндекс маркет" not in source:
+        return False
+
+    parsed = urlparse(item.url)
+    host = parsed.netloc.casefold()
+    if host != "market.yandex.ru" and not host.endswith(".market.yandex.ru"):
+        return False
+    if parsed.path.rstrip("/").casefold() != "/search":
+        return False
+
+    query = {key.casefold() for key in parse_qs(parsed.query)}
+    return bool(query & YANDEX_MARKET_OFFER_QUERY_KEYS)
+
+
+def _is_rejected_search_url(item: ProductOffer) -> bool:
+    u = item.url.lower()
+    if "?q=" not in u and "?text=" not in u and "/search" not in u:
+        return False
+    return not _is_yandex_market_offer_search_url(item)
+
+
 def filter_offers(offers: Iterable[ProductOffer], config: dict[str, int] | None = None) -> list[ProductOffer]:
     if config is None:
         config = load_config()
@@ -149,8 +174,7 @@ def filter_offers(offers: Iterable[ProductOffer], config: dict[str, int] | None 
             continue
         if item.price > config["max_price_rub"]:
             continue
-        u = item.url.lower()
-        if "?q=" in u or "?text=" in u or "/search" in u:
+        if _is_rejected_search_url(item):
             continue
         if not is_rtx_5070_ti(item.title, item.raw_text):
             continue
