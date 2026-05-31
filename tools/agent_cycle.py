@@ -1,6 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-import argparse, json, locale, subprocess, sys, time
+import argparse, json, locale, os, subprocess, sys, time, uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_QUEUE_PATH = ROOT / "tools" / "agent_tasks" / "queue.json"
 DEFAULT_STATE_PATH = Path(r"C:\ProgramData\MonitorAgent\agent-cycle-state.json")
 DEFAULT_LOG_PATH = Path(r"C:\ProgramData\MonitorAgent\agent-cycle-last.log")
+DEFAULT_LOCK_PATH = Path(r"C:\ProgramData\MonitorAgent\agent-cycle.lock")
+LOCK_STALE_AFTER_SECONDS = 90 * 60
 DEFAULT_NOTIFY_ON_EVENTS = ("needs_review", "failed", "auto_merge_denied", "dirty_worktree", "pr_created_without_merge", "cycle_completed_with_errors")
 DEFAULT_NOTIFY_ON = ",".join(DEFAULT_NOTIFY_ON_EVENTS)
 TERMINAL_RUNTIME_STATUSES = {"completed", "needs_review", "failed", "auto_merge_denied", "pr_created_without_merge"}
@@ -28,6 +30,10 @@ SAFE_TEST_NAME_PREFIXES = ("test_",)
 SAFE_TEST_NAME_SUFFIXES = ("_test.py",)
 
 class CycleError(RuntimeError): pass
+
+class CycleLock:
+    def __init__(self, path: Path, token: str) -> None:
+        self.path, self.token = path, token
 
 def configure_stdio() -> None:
     for stream in (sys.stdout, sys.stderr):
@@ -119,6 +125,55 @@ def select_pending_tasks(queue: list[dict[str, Any]], state: dict[str, Any], max
     return out
 
 def utc_timestamp() -> str: return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+def _parse_lock_timestamp(raw: object) -> datetime | None:
+    if not isinstance(raw, str): return None
+    try: ts = datetime.fromisoformat(raw)
+    except ValueError: return None
+    return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts.astimezone(timezone.utc)
+
+def _read_lock(path: Path) -> dict[str, Any]:
+    try: raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError): return {}
+    return raw if isinstance(raw, dict) else {}
+
+def _pid_is_dead(pid: object) -> bool:
+    try: pid_int = int(pid)
+    except (TypeError, ValueError): return False
+    if pid_int <= 0: return False
+    try: os.kill(pid_int, 0)
+    except ProcessLookupError: return True
+    except (PermissionError, OSError): return False
+    return False
+
+def _lock_is_stale(info: dict[str, Any], *, now: datetime, stale_after_seconds: int) -> bool:
+    ts = _parse_lock_timestamp(info.get("timestamp"))
+    if ts and (now.astimezone(timezone.utc) - ts).total_seconds() > stale_after_seconds: return True
+    return _pid_is_dead(info.get("pid"))
+
+def acquire_cycle_lock(path: Path | None = None, *, stale_after_seconds: int = LOCK_STALE_AFTER_SECONDS, now: datetime | None = None) -> CycleLock | None:
+    path = Path(path or DEFAULT_LOCK_PATH); now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc); token = uuid.uuid4().hex
+    payload = json.dumps({"pid": os.getpid(), "timestamp": now.isoformat(timespec="seconds"), "token": token}, ensure_ascii=False) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        try:
+            fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            if not _lock_is_stale(_read_lock(path), now=now, stale_after_seconds=stale_after_seconds): return None
+            try: path.unlink()
+            except FileNotFoundError: pass
+            except OSError: return None
+            continue
+        try: os.write(fd, payload.encode("utf-8"))
+        finally: os.close(fd)
+        return CycleLock(path, token)
+
+def release_cycle_lock(lock: CycleLock | None) -> None:
+    if not lock: return
+    info = _read_lock(lock.path)
+    if info.get("token") != lock.token: return
+    try: lock.path.unlink()
+    except FileNotFoundError: pass
 
 def update_task_state(state: dict[str, Any], task: dict[str, Any], *, status: str, result: str, pr: dict[str, Any] | None = None, changed_files: list[str] | None = None, details: dict[str, object] | None = None) -> None:
     item = {"status": status, "branch": task["branch"], "pr_url": pr.get("url") if pr else None, "pr_number": pr.get("number") if pr else None, "updated_at": utc_timestamp(), "result": result, "changed_files": changed_files or []}
@@ -258,12 +313,23 @@ def run_cycle(args: argparse.Namespace, runner: CommandRunner) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     configure_stdio(); args = parse_args(argv); logger = Logger(resolve_path(args.log, base=Path.cwd()) if args.log else DEFAULT_LOG_PATH); runner = CommandRunner(args.dry_run, logger)
+    lock = None
     try:
         if args.notify_test:
             return 0 if notify_event(build_notifier(args), logger, "cycle_completed_with_errors", "Agent notification test", {"log": logger.path, "test": True}) else 1
+        lock = acquire_cycle_lock()
+        if not lock:
+            logger.write("another cycle running"); return 0
         return run_cycle(args, runner)
     except (CycleError, agent_notify.NotifyError) as exc:
         logger.write(f"ERROR: {exc}"); return 1
-    finally: logger.close()
+    finally:
+        release_cycle_lock(lock); logger.close()
 
 if __name__ == "__main__": raise SystemExit(main())
+
+
+
+
+
+

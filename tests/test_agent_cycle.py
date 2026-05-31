@@ -1,4 +1,5 @@
 ﻿import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -50,6 +51,84 @@ def make_cycle_args(queue_path, state_path, *, max_tasks=1, create_pr=True, auto
         once=True,
     )
 
+
+def test_cycle_lock_acquire_and_release(tmp_path):
+    lock_path = tmp_path / "agent-cycle.lock"
+    now = datetime(2026, 5, 31, 10, 0, tzinfo=timezone.utc)
+
+    lock = agent_cycle.acquire_cycle_lock(lock_path, now=now)
+
+    assert lock is not None
+    info = json.loads(lock_path.read_text(encoding="utf-8"))
+    assert info["pid"] == agent_cycle.os.getpid()
+    assert info["timestamp"] == "2026-05-31T10:00:00+00:00"
+    assert info["token"] == lock.token
+
+    agent_cycle.release_cycle_lock(lock)
+
+    assert not lock_path.exists()
+
+
+def test_cycle_lock_refuses_second_acquire_while_held(tmp_path):
+    lock_path = tmp_path / "agent-cycle.lock"
+    now = datetime(2026, 5, 31, 10, 0, tzinfo=timezone.utc)
+    lock = agent_cycle.acquire_cycle_lock(lock_path, now=now)
+
+    try:
+        second = agent_cycle.acquire_cycle_lock(lock_path, now=now + timedelta(minutes=1))
+    finally:
+        agent_cycle.release_cycle_lock(lock)
+
+    assert second is None
+
+
+def test_cycle_lock_takes_over_stale_timestamp(tmp_path):
+    lock_path = tmp_path / "agent-cycle.lock"
+    old = datetime(2026, 5, 31, 8, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 5, 31, 10, 0, tzinfo=timezone.utc)
+    lock_path.write_text(
+        json.dumps({"pid": agent_cycle.os.getpid(), "timestamp": old.isoformat(), "token": "old"}) + "\n",
+        encoding="utf-8",
+    )
+
+    lock = agent_cycle.acquire_cycle_lock(lock_path, now=now)
+
+    try:
+        assert lock is not None
+        info = json.loads(lock_path.read_text(encoding="utf-8"))
+        assert info["timestamp"] == "2026-05-31T10:00:00+00:00"
+        assert info["token"] == lock.token
+        assert info["token"] != "old"
+    finally:
+        agent_cycle.release_cycle_lock(lock)
+
+
+def test_main_exits_cleanly_when_another_cycle_is_running(tmp_path, monkeypatch):
+    lock_path = tmp_path / "agent-cycle.lock"
+    state_path = tmp_path / "state.json"
+    log_path = tmp_path / "cycle.log"
+    queue_path = tmp_path / "queue.json"
+    write_queue(queue_path, [{"id": "task_a", "status": "pending", "task": "task.md", "branch": "agent/a"}])
+    lock = agent_cycle.acquire_cycle_lock(lock_path)
+    called = False
+
+    def fail_run_cycle(args, runner):
+        nonlocal called
+        called = True
+        raise AssertionError("run_cycle should not be called while lock is held")
+
+    monkeypatch.setattr(agent_cycle, "DEFAULT_LOCK_PATH", lock_path)
+    monkeypatch.setattr(agent_cycle, "run_cycle", fail_run_cycle)
+
+    try:
+        result = agent_cycle.main(["--queue", str(queue_path), "--state", str(state_path), "--log", str(log_path)])
+    finally:
+        agent_cycle.release_cycle_lock(lock)
+
+    assert result == 0
+    assert called is False
+    assert not state_path.exists()
+    assert "another cycle running" in log_path.read_text(encoding="utf-8")
 
 def test_load_queue_accepts_tasks_object(tmp_path):
     queue_path = tmp_path / "queue.json"
@@ -371,4 +450,6 @@ def test_run_cycle_auto_merge_safe_leaves_dangerous_pr_open(tmp_path):
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["tasks"]["task_a"]["status"] == "needs_review"
     assert "dangerous files changed" in state["tasks"]["task_a"]["result"]
+
+
 
