@@ -1,15 +1,12 @@
-# monitor_5070ti
+# Мониторинг предложений RTX 5070 Ti для покупки в РФ.
 
-Полноценный мониторинг предложений **RTX 5070 Ti** по магазинам и маркетплейсам с фильтрацией, сигналами и отчетами.
+Проект отслеживает предложения по *RTX 5070 Ti* в российских магазинах и маркетплейсах, фильтрует нерелевантные позиции, сравнивает цены с заданными порогами и формирует отчёты/сигналы в Telegram.
 
-
-## Price history maintenance
-
-The monitor appends to `price_history.jsonl` by default and does not prune old records automatically. To keep the file bounded, run the explicit maintenance helper when needed:
-
-```powershell
-.\.venv\Scripts\python.exe -m tools.price_history_maintenance price_history.jsonl --keep-records 5000
-.\.venv\Scripts\python.exe -m tools.price_history_maintenance price_history.jsonl --rotate-over-bytes 10485760
-```
-
-Use `--dry-run` with either option to preview the record and byte counts without writing changes. Rotation writes the current file to the next available numbered sibling such as `price_history.jsonl.1` and creates a fresh empty history file.
+# Основные возможности:
+- мониторинг предложений RTX 5070 Ti по магазинам и маркетплейсам РФ;
+- фильтрация нерелевантных товаров, дублей и завышенных цен;
+- отдельные ценовые пороги для обычного и срочного сигнала;
+- ежедневный Telegram-отчёт по найденным предложениям;
+- поддержка автономного запуска на отдельной Windows-машине;
+- диагностика источников: доступность, блокировки, ошибки парсинга;
+- поддержка доработки проекта через ИИ-агентов и coding-assistant инструменты: Codex, Claude, Claude Code, отдельные ветки и Pull Request.
