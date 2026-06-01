@@ -1,9 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-import argparse, json, locale, os, subprocess, sys, time, uuid
+import argparse, json, locale, os, subprocess, sys, time, urllib.error, uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -18,6 +18,7 @@ DEFAULT_LOCK_PATH = Path(r"C:\ProgramData\MonitorAgent\agent-cycle.lock")
 LOCK_STALE_AFTER_SECONDS = 90 * 60
 DEFAULT_NOTIFY_ON_EVENTS = ("needs_review", "failed", "auto_merge_denied", "dirty_worktree", "pr_created_without_merge", "cycle_completed_with_errors")
 DEFAULT_NOTIFY_ON = ",".join(DEFAULT_NOTIFY_ON_EVENTS)
+MAX_TRANSIENT_RETRY_ATTEMPTS = 5
 TERMINAL_RUNTIME_STATUSES = {"completed", "needs_review", "failed", "auto_merge_denied", "pr_created_without_merge"}
 DANGEROUS_EXACT_PATHS = {"config.example.json", "config.json", "run_daily_report.bat", "run_monitor.bat", "run_monitor_browser.bat", "tools/agent_run.py", "tools/agent_cycle.py", "tools/agent_tasks/queue.json", "pyproject.toml", "requirements.txt", "requirements-dev.txt", "poetry.lock", "pdm.lock"}
 DANGEROUS_DIR_PREFIXES = (".github/", "scheduler/", "system/")
@@ -30,6 +31,9 @@ SAFE_TEST_NAME_PREFIXES = ("test_",)
 SAFE_TEST_NAME_SUFFIXES = ("_test.py",)
 
 class CycleError(RuntimeError): pass
+
+TRANSIENT_ERROR_STRINGS = ("rate limit", "too many requests", "connection reset", "timed out", "timeout", "temporarily unavailable", "network is unreachable")
+TRANSIENT_URLERROR_STRINGS = ("connection reset", "timed out", "timeout", "temporarily unavailable", "network is unreachable", "connection aborted")
 
 class CycleLock:
     def __init__(self, path: Path, token: str) -> None:
@@ -76,7 +80,10 @@ class CommandRunner:
             raise CycleError(f"Command timed out: {display}") from exc
         if p.stdout and not capture: self.logger.write(p.stdout.rstrip())
         if p.stderr and not capture: self.logger.write(p.stderr.rstrip())
-        if check and p.returncode != 0: raise CycleError(f"Command failed with exit code {p.returncode}: {display}")
+        if check and p.returncode != 0:
+            output = "\n".join(part.strip() for part in (p.stdout, p.stderr) if part and part.strip())
+            suffix = f": {error_snippet(Exception(output), limit=500)}" if output else ""
+            raise CycleError(f"Command failed with exit code {p.returncode}: {display}{suffix}")
         return p
 
 def format_command(args: Sequence[str]) -> str: return " ".join(quote_arg(str(a)) for a in args)
@@ -115,6 +122,50 @@ def load_state(path: Path) -> dict[str, Any]:
 
 def save_state(path: Path, state: dict[str, Any]) -> None:
     atomic_write_text(path, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+
+def classify_error(exc: BaseException) -> Literal["transient", "permanent"]:
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return "transient"
+    if isinstance(exc, urllib.error.HTTPError) and exc.code in {429, 503}:
+        return "transient"
+    if isinstance(exc, urllib.error.URLError):
+        reason = str(getattr(exc, "reason", exc)).lower()
+        return "transient" if any(s in reason for s in TRANSIENT_URLERROR_STRINGS) else "permanent"
+    cause = getattr(exc, "__cause__", None)
+    if isinstance(cause, BaseException) and cause is not exc and classify_error(cause) == "transient":
+        return "transient"
+    message = str(exc).lower()
+    if any(s in message for s in TRANSIENT_ERROR_STRINGS) or "http 429" in message or "http 503" in message:
+        return "transient"
+    return "permanent"
+
+def exponential_backoff(attempt: int, base_sec: float = 5.0, cap_sec: float = 300.0) -> float:
+    return min(base_sec * (2 ** attempt), cap_sec)
+
+def error_snippet(exc: BaseException, *, limit: int = 180) -> str:
+    text = " ".join(str(exc).split())
+    return text[:limit]
+
+def checkpoint_for_task(state: dict[str, Any], task: dict[str, Any]) -> dict[str, Any] | None:
+    checkpoint = state.get("current_task_checkpoint")
+    if not isinstance(checkpoint, dict) or checkpoint.get("task_id") != task.get("id"):
+        return None
+    task_state = state.get("tasks", {}).get(task["id"])
+    if not isinstance(task_state, dict) or task_state.get("status") != "in_progress":
+        return None
+    return checkpoint
+
+def write_task_checkpoint(state_path: Path, state: dict[str, Any], task: dict[str, Any], step: str, *, details: dict[str, object] | None = None) -> None:
+    checkpoint = {"task_id": task["id"], "branch": task["branch"], "step": step, "updated_at": utc_timestamp()}
+    if details:
+        checkpoint.update(details)
+    state["current_task_checkpoint"] = checkpoint
+    save_state(state_path, state)
+
+def clear_task_checkpoint(state_path: Path, state: dict[str, Any]) -> None:
+    if "current_task_checkpoint" in state:
+        state.pop("current_task_checkpoint", None)
+        save_state(state_path, state)
 
 def select_pending_tasks(queue: list[dict[str, Any]], state: dict[str, Any], max_tasks: int) -> list[dict[str, Any]]:
     stopped = {tid for tid, item in state.get("tasks", {}).items() if isinstance(item, dict) and item.get("status") in TERMINAL_RUNTIME_STATUSES}
@@ -180,11 +231,34 @@ def update_task_state(state: dict[str, Any], task: dict[str, Any], *, status: st
     if details: item.update(details)
     state.setdefault("tasks", {})[task["id"]] = item
 
-def build_agent_run_command(task: dict[str, Any], *, create_pr: bool, dry_run: bool) -> list[str]:
+def build_agent_run_command(task: dict[str, Any], *, create_pr: bool, dry_run: bool, state_path: Path | None = None, resume_from: str | None = None) -> list[str]:
     cmd = [sys.executable, str(ROOT / "tools" / "agent_run.py"), "--task", str(resolve_path(task["task"])), "--branch", str(task["branch"]), "--pr-title", str(task.get("pr_title") or task["id"]), "--pr-body", str(task.get("pr_body") or f"Automated queued agent task `{task['id']}`.")]
     if create_pr: cmd.append("--create-pr")
     if dry_run: cmd.append("--dry-run")
+    if state_path:
+        cmd.extend(["--checkpoint-state", str(state_path), "--task-id", str(task["id"])])
+    if resume_from:
+        cmd.extend(["--resume-from", resume_from])
     return cmd
+
+def run_task(runner: CommandRunner, task: dict[str, Any], *, args: argparse.Namespace, state_path: Path, resume_from: str | None = None) -> subprocess.CompletedProcess[str]:
+    attempt = 0
+    while True:
+        checkpoint = checkpoint_for_task(load_state(state_path), task)
+        resume_step = str(checkpoint.get("step")) if checkpoint else resume_from
+        command = build_agent_run_command(task, create_pr=args.create_pr, dry_run=args.dry_run, state_path=state_path, resume_from=resume_step)
+        try:
+            return runner.run(command, mutates=True)
+        except Exception as exc:
+            if classify_error(exc) != "transient":
+                raise
+            if attempt >= MAX_TRANSIENT_RETRY_ATTEMPTS:
+                runner.logger.write(f"Task {task['id']}: transient retry limit exhausted after {attempt} retries: {error_snippet(exc)}")
+                raise
+            wait_sec = exponential_backoff(attempt)
+            runner.logger.write(f"Task {task['id']}: transient error retry {attempt + 1}/{MAX_TRANSIENT_RETRY_ATTEMPTS} in {wait_sec:g}s: {error_snippet(exc)}")
+            time.sleep(wait_sec)
+            attempt += 1
 
 def retry(runner: CommandRunner, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
     last = None
@@ -302,12 +376,19 @@ def run_cycle(args: argparse.Namespace, runner: CommandRunner) -> int:
     runner.logger.write(f"Agent cycle started: {utc_timestamp()}"); runner.logger.write(f"Queue: {queue_path}"); runner.logger.write(f"State: {state_path}"); runner.logger.write(f"Selected tasks: {len(tasks)}")
     errors = 0
     for task in tasks:
-        runner.logger.write(f"Task {task['id']}: running on branch {task['branch']}")
-        try: runner.run(build_agent_run_command(task, create_pr=args.create_pr, dry_run=args.dry_run), mutates=True)
-        except CycleError as exc:
-            if recover_after_agent_run_failure(state, task, error=exc, args=args, runner=runner, notifier=notifier, state_path=state_path): save_state(state_path, state); continue
-            errors += 1; update_task_state(state, task, status="failed", result=str(exc)); save_state(state_path, state); notify_event(notifier, runner.logger, "failed", f"Task {task['id']} failed", {"task_id": task["id"], "branch": task["branch"], "result": str(exc), "state": state_path}); continue
-        classify_pr_after_agent_run(state, task, pr=discover_pr(runner, task["branch"]) if args.create_pr else None, args=args, runner=runner, notifier=notifier, state_path=state_path, result_prefix="agent_run succeeded"); save_state(state_path, state)
+        checkpoint = checkpoint_for_task(state, task)
+        resume_from = str(checkpoint.get("step")) if checkpoint else None
+        if resume_from:
+            runner.logger.write(f"Task {task['id']}: resuming from checkpoint {resume_from} on branch {task['branch']}")
+        else:
+            runner.logger.write(f"Task {task['id']}: running on branch {task['branch']}")
+            update_task_state(state, task, status="in_progress", result="agent_run started")
+            write_task_checkpoint(state_path, state, task, "started")
+        try: run_task(runner, task, args=args, state_path=state_path, resume_from=resume_from)
+        except Exception as exc:
+            if recover_after_agent_run_failure(state, task, error=exc, args=args, runner=runner, notifier=notifier, state_path=state_path): clear_task_checkpoint(state_path, state); save_state(state_path, state); continue
+            errors += 1; runner.logger.write(f"Task {task['id']}: failed with {classify_error(exc)} error: {exc}"); update_task_state(state, task, status="failed", result=str(exc)); clear_task_checkpoint(state_path, state); save_state(state_path, state); notify_event(notifier, runner.logger, "failed", f"Task {task['id']} failed", {"task_id": task["id"], "branch": task["branch"], "result": str(exc), "state": state_path}); continue
+        classify_pr_after_agent_run(state, task, pr=discover_pr(runner, task["branch"]) if args.create_pr else None, args=args, runner=runner, notifier=notifier, state_path=state_path, result_prefix="agent_run succeeded"); clear_task_checkpoint(state_path, state); save_state(state_path, state)
     if errors: notify_event(notifier, runner.logger, "cycle_completed_with_errors", "Agent cycle completed with errors", {"errors": errors, "state": state_path}); return 1
     return 0
 
@@ -327,9 +408,3 @@ def main(argv: Sequence[str] | None = None) -> int:
         release_cycle_lock(lock); logger.close()
 
 if __name__ == "__main__": raise SystemExit(main())
-
-
-
-
-
-

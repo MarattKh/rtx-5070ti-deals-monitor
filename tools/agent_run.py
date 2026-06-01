@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import locale
 import os
 import shutil
@@ -8,13 +9,16 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
+
+from tools.atomic_io import atomic_write_text
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOG_PATH = Path(r"C:\ProgramData\MonitorAgent\agent-last.log")
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 60 * 60
 DEFAULT_CODEX_TIMEOUT_SECONDS = 45 * 60
+CHECKPOINT_ORDER = ("started", "branch_prepared", "code_written", "tests_passed", "committed", "pushed", "pr_created")
 
 # Root cause fixed here: the old runner passed raw task markdown straight into
 # Codex. That allowed Codex to create branches, commits, pushes or PRs while
@@ -193,6 +197,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Print mutating commands without running them")
     parser.add_argument("--pr-title", help="PR title; also used as commit message when set")
     parser.add_argument("--pr-body", help="PR body text")
+    parser.add_argument("--checkpoint-state", help="Path to agent-cycle state JSON for resume checkpoints")
+    parser.add_argument("--task-id", help="Queue task id for checkpoint writes")
+    parser.add_argument("--resume-from", choices=CHECKPOINT_ORDER, help="Resume workflow from the named checkpoint step")
     parser.add_argument(
         "--check-monitor",
         action="store_true",
@@ -206,6 +213,36 @@ def resolve_task_path(raw_path: str) -> Path:
     if not path.is_absolute():
         path = ROOT / path
     return path
+
+def checkpoint_reached(resume_from: str | None, step: str) -> bool:
+    return bool(resume_from) and CHECKPOINT_ORDER.index(resume_from) >= CHECKPOINT_ORDER.index(step)
+
+def write_cycle_checkpoint(args: argparse.Namespace, step: str) -> None:
+    checkpoint_state = getattr(args, "checkpoint_state", None)
+    task_id = getattr(args, "task_id", None)
+    if not checkpoint_state or not task_id:
+        return
+    path = Path(checkpoint_state)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        raw = {}
+    state: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    if not isinstance(state.get("tasks"), dict):
+        state["tasks"] = {}
+    state["current_task_checkpoint"] = {
+        "task_id": task_id,
+        "branch": args.branch,
+        "step": step,
+        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    task_state = state["tasks"].setdefault(task_id, {})
+    if isinstance(task_state, dict):
+        task_state.setdefault("status", "in_progress")
+        task_state["branch"] = args.branch
+        task_state["updated_at"] = state["current_task_checkpoint"]["updated_at"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(path, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
 
 
 def default_checks(include_monitor: bool = False) -> list[list[str]]:
@@ -351,32 +388,47 @@ def run_workflow(args: argparse.Namespace, runner: CommandRunner) -> None:
     runner.logger.write(f"Log: {runner.logger.path if runner.logger._fh else 'console only'}")
 
     ensure_git_repo(runner)
-    ensure_clean_worktree(runner)
+    resume_from = getattr(args, "resume_from", None)
 
-    runner.run(["git", "checkout", "main"], mutates=True)
-    runner.run(["git", "pull", "--ff-only"], mutates=True)
-    prepare_task_branch(runner, args.branch)
+    if checkpoint_reached(resume_from, "branch_prepared"):
+        runner.run(["git", "checkout", args.branch], mutates=True)
+    else:
+        ensure_clean_worktree(runner)
+        runner.run(["git", "checkout", "main"], mutates=True)
+        runner.run(["git", "pull", "--ff-only"], mutates=True)
+        prepare_task_branch(runner, args.branch)
+        write_cycle_checkpoint(args, "branch_prepared")
 
-    codex_timeout = _timeout_from_env("AGENT_RUN_CODEX_TIMEOUT_SECONDS", DEFAULT_CODEX_TIMEOUT_SECONDS)
-    runner.run(
-        [resolve_codex_executable(), "exec", "--profile", "agent"],
-        input_text=codex_prompt,
-        mutates=True,
-        timeout=codex_timeout,
-    )
+    if not checkpoint_reached(resume_from, "code_written"):
+        if checkpoint_reached(resume_from, "branch_prepared"):
+            ensure_clean_worktree(runner)
+        codex_timeout = _timeout_from_env("AGENT_RUN_CODEX_TIMEOUT_SECONDS", DEFAULT_CODEX_TIMEOUT_SECONDS)
+        runner.run(
+            [resolve_codex_executable(), "exec", "--profile", "agent"],
+            input_text=codex_prompt,
+            mutates=True,
+            timeout=codex_timeout,
+        )
+        write_cycle_checkpoint(args, "code_written")
 
-    run_checks(runner, default_checks(args.check_monitor))
+    if not checkpoint_reached(resume_from, "tests_passed"):
+        run_checks(runner, default_checks(args.check_monitor))
+        write_cycle_checkpoint(args, "tests_passed")
     show_diff_summary(runner)
 
-    if not has_changes(runner):
+    if not has_changes(runner) and not checkpoint_reached(resume_from, "committed"):
         runner.logger.write("No diff after agent run; nothing to commit or push.")
         return
 
-    runner.run(["git", "add", "-A"], mutates=True)
     commit_message = args.pr_title or f"Run agent task {task_path.stem}"
-    runner.run(["git", "commit", "-m", commit_message], mutates=True)
+    if not checkpoint_reached(resume_from, "committed"):
+        runner.run(["git", "add", "-A"], mutates=True)
+        runner.run(["git", "commit", "-m", commit_message], mutates=True)
+        write_cycle_checkpoint(args, "committed")
     commit_sha = current_commit_sha(runner)
-    runner.run(["git", "push", "-u", "origin", args.branch], mutates=True)
+    if not checkpoint_reached(resume_from, "pushed"):
+        runner.run(["git", "push", "-u", "origin", args.branch], mutates=True)
+        write_cycle_checkpoint(args, "pushed")
 
     pr_title = args.pr_title or commit_message
     pr_body = args.pr_body or f"Automated local agent run for `{task_path.name}`."
@@ -385,6 +437,7 @@ def run_workflow(args: argparse.Namespace, runner: CommandRunner) -> None:
     if args.create_pr:
         try:
             runner.run(pr_command, mutates=True)
+            write_cycle_checkpoint(args, "pr_created")
         except RunnerError:
             log_pushed_branch_recovery(runner, branch=args.branch, commit_sha=commit_sha, pr_command=pr_command)
             raise

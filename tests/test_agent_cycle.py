@@ -1,4 +1,6 @@
 ﻿import json
+import subprocess
+import urllib.error
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -451,5 +453,47 @@ def test_run_cycle_auto_merge_safe_leaves_dangerous_pr_open(tmp_path):
     assert state["tasks"]["task_a"]["status"] == "needs_review"
     assert "dangerous files changed" in state["tasks"]["task_a"]["result"]
 
+def test_classify_transient_urlopen_error():
+    assert agent_cycle.classify_error(urllib.error.URLError("Connection reset")) == "transient"
 
+
+def test_classify_permanent_auth_error():
+    exc = subprocess.CalledProcessError(1, "git", b"auth failed")
+    assert agent_cycle.classify_error(exc) == "permanent"
+
+
+def test_exponential_backoff_cap():
+    assert agent_cycle.exponential_backoff(10, base_sec=5.0, cap_sec=300.0) == 300.0
+
+
+def test_retry_succeeds_on_third_attempt(tmp_path, monkeypatch):
+    task_file = tmp_path / "task.md"
+    task_file.write_text("do work", encoding="utf-8")
+    state_path = tmp_path / "state.json"
+    task = {"id": "task_retry", "task": str(task_file), "branch": "agent/retry"}
+    args = make_cycle_args(tmp_path / "queue.json", state_path, create_pr=False)
+
+    class FlakyRunner:
+        def __init__(self):
+            self.calls = 0
+            self.commands = []
+            self.logger = MemoryLogger()
+
+        def run(self, args, **kwargs):
+            self.calls += 1
+            self.commands.append((list(args), kwargs))
+            if self.calls < 3:
+                raise urllib.error.URLError("Connection reset")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    sleeps = []
+    monkeypatch.setattr(agent_cycle.time, "sleep", sleeps.append)
+    runner = FlakyRunner()
+
+    result = agent_cycle.run_task(runner, task, args=args, state_path=state_path)
+
+    assert result.returncode == 0
+    assert runner.calls == 3
+    assert sleeps == [5.0, 10.0]
+    assert any("transient error retry 1/5" in line for line in runner.logger.lines)
 
