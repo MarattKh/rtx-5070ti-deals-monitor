@@ -17,6 +17,22 @@
       "pr_body": "Add a conservative durable history log for offers, separate from notifications."
     },
     {
+      "id": "stage_2e_automerge_validator",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_2e_automerge_validator.md",
+      "branch": "agent/stage-2e-automerge-validator",
+      "pr_title": "Agent cycle log: pipeline validation run",
+      "pr_body": "Docs-only change that proves the agent auto-merge pipeline works end-to-end through branch protection."
+    },
+    {
+      "id": "stage_2e_retry_resume",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_2e_retry_resume.md",
+      "branch": "agent/stage-2e-retry-resume",
+      "pr_title": "Add retry/resume for transient agent cycle errors",
+      "pr_body": "Distinguish transient from permanent errors, add exponential backoff, and save task checkpoints for recovery."
+    },
+    {
       "id": "stage_1o_agent_scheduler_runbook",
       "status": "pending",
       "task": "tools/agent_tasks/stage_1o_agent_scheduler_runbook.md",
@@ -159,6 +175,46 @@
       "branch": "agent/stage-3a-concurrency-lock",
       "pr_title": "Add concurrency lock to agent cycle",
       "pr_body": "Prevent overlapping agent cycle runs by acquiring an exclusive lock file at cycle start."
+    },
+    {
+      "id": "stage_2f_browser_helper",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_2f_browser_helper.md",
+      "branch": "agent/stage-2f-browser-helper",
+      "pr_title": "Add Playwright check and safe browser fetch helper",
+      "pr_body": "Add check_playwright_installed(), fetch_html_safe(), and install_playwright_if_missing() to parsers/browser.py with tests."
+    },
+    {
+      "id": "stage_2f_browser_first_source",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_2f_browser_first_source.md",
+      "branch": "agent/stage-2f-browser-first-source",
+      "pr_title": "Add browser scraping for first dark RTX source",
+      "pr_body": "Write a dedicated browser-based parser for one confirmed-dark source as proof-of-concept, with fixture tests."
+    },
+    {
+      "id": "stage_2f_browser_batch2",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_2f_browser_batch2.md",
+      "branch": "agent/stage-2f-browser-batch2",
+      "pr_title": "Add browser scraping for dark RTX sources (batch 2)",
+      "pr_body": "Extend browser-based parsing to 2-3 more dark sources using the pattern from the first-source task."
+    },
+    {
+      "id": "stage_2f_browser_batch3",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_2f_browser_batch3.md",
+      "branch": "agent/stage-2f-browser-batch3",
+      "pr_title": "Add browser scraping for remaining dark RTX sources (batch 3)",
+      "pr_body": "Handle remaining dark sources; document any that remain inaccessible with a structured comment."
+    },
+    {
+      "id": "stage_2g_queue_validator",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_2g_queue_validator.md",
+      "branch": "agent/stage-2g-queue-validator",
+      "pr_title": "Agent cycle log: queue validation summary",
+      "pr_body": "Final validation: full test suite, main cleanliness check, per-source smoke-check, summary report."
     }
   ]
 }
