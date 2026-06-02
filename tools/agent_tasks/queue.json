@@ -215,6 +215,38 @@
       "branch": "agent/stage-2g-queue-validator",
       "pr_title": "Agent cycle log: queue validation summary",
       "pr_body": "Final validation: full test suite, main cleanliness check, per-source smoke-check, summary report."
+    },
+    {
+      "id": "stage_3b_revive_citilink",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_3b_revive_citilink.md",
+      "branch": "agent/stage-3b-revive-citilink",
+      "pr_title": "fix: revive Citilink RTX 5070 Ti parser with live DOM selectors",
+      "pr_body": "Verify and update Citilink dedicated parser selectors against the current live Playwright HTML. Add fixture test. Record live raw/accepted counts in PR body. NO auto-merge."
+    },
+    {
+      "id": "stage_3b_revive_wildberries",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_3b_revive_wildberries.md",
+      "branch": "agent/stage-3b-revive-wildberries",
+      "pr_title": "fix: revive Wildberries RTX 5070 Ti parser or document WBAAS block",
+      "pr_body": "Attempt fresh Playwright fetch with improved settings; write parse_browser_html if accessible, or document WBAAS block with dated evidence if not. Add fixture tests. NO auto-merge."
+    },
+    {
+      "id": "stage_3b_revive_computeruniverse",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_3b_revive_computeruniverse.md",
+      "branch": "agent/stage-3b-revive-computeruniverse",
+      "pr_title": "feat: dedicated ComputerUniverse RTX 5070 Ti parser",
+      "pr_body": "Replace generic scrape_search_page with a dedicated parse_cards parser using real DOM selectors from live Playwright HTML. Add fixture tests. Record live raw/accepted counts. NO auto-merge."
+    },
+    {
+      "id": "stage_3b_revive_avito",
+      "status": "pending",
+      "task": "tools/agent_tasks/stage_3b_revive_avito.md",
+      "branch": "agent/stage-3b-revive-avito",
+      "pr_title": "feat: dedicated Avito RTX 5070 Ti parser",
+      "pr_body": "Replace generic scrape_search_page with a dedicated parse_cards parser using real DOM selectors from live Playwright HTML. Handle used/new condition. Add fixture tests. Record live raw/accepted counts. NO auto-merge."
     }
   ]
 }
