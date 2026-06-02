@@ -5,6 +5,7 @@ import csv
 import json
 import logging
 import os
+import re
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -109,35 +110,25 @@ def is_rtx_5070_ti(title: str, raw_text: str) -> bool:
     return "5070ti" in compact or ("5070" in haystack and "ti" in haystack)
 
 
+_ACCESSORY_RE = re.compile(
+    r"\b(?:"
+    r"5070\s+super|"
+    r"кабель|переходник|кулер|водоблок|waterblock|ноутбук|laptop|компьютер|"
+    r"системный\s+блок|gaming\s+pc|"
+    r"пк|корпус|держатель|подставка|чехол|"
+    r"вентилятор|кронштейн|крепление|термопаста|райзер"
+    r")\b"
+)
+
+
 def is_accessory_or_invalid(title: str, raw_text: str) -> bool:
     haystack = normalize_title(f"{title} {raw_text}")
     compact = haystack.replace(" ", "")
 
-    bad_keywords = [
-        "5070 super",
-        "кабель",
-        "переходник",
-        "кулер",
-        "водоблок",
-        "waterblock",
-        "ноутбук",
-        "laptop",
-        "компьютер",
-        "системный блок",
-        "gaming pc",
-        "pc",
-        "пк",
-        "корпус",
-        "держатель",
-        "подставка",
-        "чехол",
-        "fan",
-    ]
-
     if "5070 ti" not in haystack and "5070ti" not in compact:
         return True
 
-    return any(keyword in haystack for keyword in bad_keywords)
+    return bool(_ACCESSORY_RE.search(haystack))
 
 
 def _is_yandex_market_offer_search_url(item: ProductOffer) -> bool:

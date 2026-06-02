@@ -49,6 +49,75 @@ def test_rejects_waterblock():
     assert offers == []
 
 
+# --- accessory filter: positive cases (PCI-E / FAN descriptors must pass) ---
+
+def test_accepts_gpu_with_pcie_in_title():
+    offers = filter_offers([mk_offer("Видеокарта Gigabyte PCI-E 5.0 RTX5070TI 16Gb")])
+    assert len(offers) == 1
+
+
+def test_accepts_gpu_with_pcie16_in_title():
+    offers = filter_offers([mk_offer("Видеокарта PCIE16 RTX5070TI 16GB RTX 5070 Ti 16G OC MSI")])
+    assert len(offers) == 1
+
+
+def test_accepts_gpu_with_3fan_in_title():
+    offers = filter_offers([mk_offer("Видеокарта MSI RTX5070Ti GAMING TRIO OC 16GB 3FAN RTL")])
+    assert len(offers) == 1
+
+
+def test_accepts_gpu_with_4fan_in_title():
+    offers = filter_offers([mk_offer("RTX 5070 Ti OC 16GB 4FAN Edition")])
+    assert len(offers) == 1
+
+
+def test_accepts_gpu_with_triple_fan_in_title():
+    offers = filter_offers([mk_offer("RTX 5070 Ti Triple Fan 16GB OC")])
+    assert len(offers) == 1
+
+
+def test_accepts_gpu_with_dual_fan_in_title():
+    offers = filter_offers([mk_offer("RTX 5070 Ti Dual Fan Gaming OC")])
+    assert len(offers) == 1
+
+
+# --- accessory filter: negative cases (accessories must stay rejected) ---
+
+def test_rejects_waterblock_with_model():
+    offers = filter_offers([mk_offer("Водоблок для RTX 5070 Ti")])
+    assert offers == []
+
+
+def test_rejects_cable_riser():
+    offers = filter_offers([mk_offer("Кабель PCI-E райзер для RTX 5070 Ti")])
+    assert offers == []
+
+
+def test_rejects_bracket():
+    offers = filter_offers([mk_offer("Кронштейн крепления видеокарты RTX 5070 Ti")])
+    assert offers == []
+
+
+def test_rejects_standalone_fan():
+    offers = filter_offers([mk_offer("Вентилятор 120мм для корпуса ПК")])
+    assert offers == []
+
+
+def test_rejects_thermal_paste():
+    offers = filter_offers([mk_offer("Термопаста Arctic для RTX 5070 Ti")])
+    assert offers == []
+
+
+def test_rejects_power_adapter():
+    offers = filter_offers([mk_offer("Переходник 12VHPWR для RTX 5070 Ti")])
+    assert offers == []
+
+
+def test_rejects_riser_cable():
+    offers = filter_offers([mk_offer("Райзер PCI-E 16x для RTX 5070 Ti")])
+    assert offers == []
+
+
 def test_reports_are_created(tmp_path, monkeypatch):
     import monitor_5070_ti_v_2 as mon
 

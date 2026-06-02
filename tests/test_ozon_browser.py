@@ -17,8 +17,8 @@ FIXTURE_HTML = """
       <span class="price">76 990 RUB</span>
     </div>
     <div class="tile-root">
-      <a href="/product/fan-rtx-5070-ti-789/">
-        <span class="tile-hover-target">Fan for GeForce RTX 5070 Ti</span>
+      <a href="/product/ventilator-rtx-5070-ti-789/">
+        <span class="tile-hover-target">Вентилятор для GeForce RTX 5070 Ti</span>
       </a>
       <span class="price">4 990 RUB</span>
     </div>
@@ -42,5 +42,5 @@ def test_parse_browser_html_rejects_non_rtx_and_accessory():
 
     titles = [offer.title for offer in offers]
     assert "Gigabyte GeForce RTX 5070 WINDFORCE 16G" not in titles
-    assert "Fan for GeForce RTX 5070 Ti" not in titles
+    assert "Вентилятор для GeForce RTX 5070 Ti" not in titles
 
