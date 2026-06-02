@@ -1,7 +1,52 @@
 from __future__ import annotations
 
+import logging
+import subprocess
+import sys
 from pathlib import Path
 from urllib.error import URLError
+
+logger = logging.getLogger(__name__)
+
+
+def check_playwright_installed() -> bool:
+    try:
+        import playwright.sync_api  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+def fetch_html_safe(url: str, **kwargs) -> str:
+    try:
+        return fetch_html(url, **kwargs)
+    except Exception as exc:
+        logger.warning("Browser fetch failed for %s: %s", url, str(exc).splitlines()[0])
+        return ""
+
+
+def install_playwright_if_missing() -> bool:
+    if check_playwright_installed():
+        return True
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception as exc:
+        logger.warning("Playwright chromium install failed: %s", str(exc).splitlines()[0])
+        return False
+
+    if result.returncode == 0:
+        return True
+
+    error = (result.stderr or result.stdout or "").strip().splitlines()
+    detail = error[0] if error else f"exit code {result.returncode}"
+    logger.warning("Playwright chromium install failed: %s", detail)
+    return False
 
 
 def fetch_html(
