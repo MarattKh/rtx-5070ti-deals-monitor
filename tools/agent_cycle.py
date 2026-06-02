@@ -234,6 +234,15 @@ def is_test_path(path: str) -> bool:
     n = _norm(path); name = Path(n).name; return n.startswith(SAFE_TEST_DIR_PREFIXES) or name.startswith(SAFE_TEST_NAME_PREFIXES) or name.endswith(SAFE_TEST_NAME_SUFFIXES)
 def is_low_risk_auto_merge_path(path: str) -> bool: return is_documentation_path(path) or is_test_path(path)
 
+def resolve_mergeable(runner: CommandRunner, pr: dict[str, Any], *, max_attempts: int = 6, delay: float = 2.5) -> dict[str, Any]:
+    for attempt in range(max_attempts):
+        if str(pr.get("mergeable", "")).upper() not in {"", "UNKNOWN"}: return pr
+        if attempt < max_attempts - 1:
+            time.sleep(delay)
+            refreshed = discover_pr(runner, str(pr["number"]))
+            if refreshed: pr = refreshed
+    return pr
+
 def evaluate_auto_merge(pr: dict[str, Any] | None, changed_files: list[str], *, allow_dependency_files: bool = False) -> tuple[bool, str]:
     if not pr: return False, "PR was not discoverable"
     if str(pr.get("state", "")).upper() != "OPEN": return False, "PR is not open"
@@ -279,7 +288,7 @@ def notify_review(notifier, logger, task, event, title, details):
 def classify_pr_after_agent_run(state, task, *, pr, args, runner, notifier, state_path, result_prefix):
     changed_files: list[str] = []
     if args.auto_merge_safe and pr:
-        changed_files = list_pr_changed_files(runner, pr["number"]); ok, reason = evaluate_auto_merge(pr, changed_files); runner.logger.write(f"Auto-merge decision for {task['id']}: {reason}")
+        pr = resolve_mergeable(runner, pr); changed_files = list_pr_changed_files(runner, pr["number"]); ok, reason = evaluate_auto_merge(pr, changed_files); runner.logger.write(f"Auto-merge decision for {task['id']}: {reason}")
         if ok: auto_merge_pr(runner, pr["number"]); update_task_state(state, task, status="completed", result="merged", pr=pr, changed_files=changed_files); return
         update_task_state(state, task, status="needs_review", result=reason, pr=pr, changed_files=changed_files); notify_review(notifier, runner.logger, task, "auto_merge_denied", f"Task {task['id']} PR was not auto-merged", {"task_id": task["id"], "branch": task["branch"], "pr": pr.get("url"), "reason": reason, "changed_files": changed_files, "state": state_path}); return
     status = "needs_review" if args.create_pr else "completed"; update_task_state(state, task, status=status, result=result_prefix, pr=pr, changed_files=changed_files)

@@ -452,4 +452,47 @@ def test_run_cycle_auto_merge_safe_leaves_dangerous_pr_open(tmp_path):
     assert "dangerous files changed" in state["tasks"]["task_a"]["result"]
 
 
+# --- resolve_mergeable ---
+
+def test_resolve_mergeable_returns_immediately_when_already_resolved():
+    pr = {"number": 10, "url": "u", "state": "OPEN", "mergeable": "MERGEABLE"}
+    runner = FakeRunner()
+    result = agent_cycle.resolve_mergeable(runner, pr, delay=0)
+    assert result["mergeable"] == "MERGEABLE"
+    gh_calls = [cmd for cmd, _ in runner.commands if cmd[:2] == ["gh", "pr"]]
+    assert gh_calls == []
+
+
+def test_resolve_mergeable_polls_until_status_determined(monkeypatch):
+    monkeypatch.setattr(agent_cycle.time, "sleep", lambda _: None)
+    call_count = 0
+    pr_unknown = json.dumps({"number": 10, "url": "u", "state": "OPEN", "mergeable": "UNKNOWN"})
+    pr_ready = json.dumps({"number": 10, "url": "u", "state": "OPEN", "mergeable": "MERGEABLE"})
+
+    class CountingRunner:
+        logger = MemoryLogger()
+        commands = []
+
+        def run(self, args, **kwargs):
+            nonlocal call_count
+            self.commands.append((list(args), kwargs))
+            call_count += 1
+            value = pr_ready if call_count >= 2 else pr_unknown
+            return SimpleNamespace(returncode=0, stdout=value, stderr="")
+
+    pr = {"number": 10, "url": "u", "state": "OPEN", "mergeable": "UNKNOWN"}
+    result = agent_cycle.resolve_mergeable(CountingRunner(), pr, max_attempts=6, delay=0)
+    assert result["mergeable"] == "MERGEABLE"
+    assert call_count >= 1
+
+
+def test_resolve_mergeable_returns_unknown_after_all_attempts(monkeypatch):
+    monkeypatch.setattr(agent_cycle.time, "sleep", lambda _: None)
+    pr_unknown = json.dumps({"number": 10, "url": "u", "state": "OPEN", "mergeable": "UNKNOWN"})
+    runner = FakeRunner({("gh", "pr", "view", "10", "--json", "number,url,state,mergeable"): pr_unknown})
+    pr = {"number": 10, "url": "u", "state": "OPEN", "mergeable": "UNKNOWN"}
+    result = agent_cycle.resolve_mergeable(runner, pr, max_attempts=3, delay=0)
+    assert str(result.get("mergeable", "")).upper() == "UNKNOWN"
+
+
 
