@@ -13,6 +13,11 @@ from typing import Any, Iterable
 from urllib.parse import parse_qs, urlparse
 
 from models import ProductOffer
+from price_oracle import (
+    MarketMedian,
+    classify_market_tier,
+    compute_market_median,
+)
 from tools.offer_deduplication import deduplicate_offers
 
 from parsers import (
@@ -31,14 +36,16 @@ from parsers import (
     yandex_market,
 )
 
-MAX_PRICE_RUB = 130_000
-
 DEFAULT_CONFIG = {
-    "max_price_rub": 130_000,
     "new_good_price": 90_000,
     "new_urgent_buy": 75_000,
     "used_good_price": 65_000,
     "used_urgent_buy": 50_000,
+    "median_window_days": 30,
+    "median_min_count": 5,
+    "suspicious_pct": 65,
+    "buy_pct": 90,
+    "at_market_pct": 110,
 }
 
 PRICE_HISTORY_PATH = Path("price_history.jsonl")
@@ -163,8 +170,6 @@ def filter_offers(offers: Iterable[ProductOffer], config: dict[str, int] | None 
             continue
         if item.currency.upper() != "RUB":
             continue
-        if item.price > config["max_price_rub"]:
-            continue
         if _is_rejected_search_url(item):
             continue
         if not is_rtx_5070_ti(item.title, item.raw_text):
@@ -204,6 +209,24 @@ def get_signal_label(item: ProductOffer, config: dict[str, int] | None = None) -
     if signal == "good_price":
         return "GOOD_PRICE"
     return "NORMAL"
+
+
+def get_market_tier(
+    offer: ProductOffer,
+    market_median: MarketMedian | None,
+    config: dict[str, int] | None = None,
+) -> str:
+    if config is None:
+        config = load_config()
+    if market_median is None:
+        return "unknown"
+    return classify_market_tier(
+        offer.price,
+        market_median.value,
+        config["suspicious_pct"],
+        config["buy_pct"],
+        config["at_market_pct"],
+    )
 
 
 def build_price_history_record(
@@ -331,14 +354,23 @@ def _format_source_summary_markdown_row(stat: dict[str, Any]) -> str:
     )
 
 
-def render_results_markdown(offers: list[ProductOffer], source_stats: list[dict[str, Any]], config: dict[str, int] | None = None) -> str:
+def _tier_order(tier: str) -> int:
+    return {"buy": 0, "suspicious": 1, "at_market": 2, "above_market": 3}.get(tier, 4)
+
+
+def render_results_markdown(
+    offers: list[ProductOffer],
+    source_stats: list[dict[str, Any]],
+    config: dict[str, int] | None = None,
+    market_median: MarketMedian | None = None,
+) -> str:
     if config is None:
         config = load_config()
     checked_at = datetime.now(timezone.utc).isoformat()
     min_price = f"{min(o.price for o in offers):.0f} RUB" if offers else "n/a"
-    urgent_count = sum(1 for o in offers if get_signal_label(o, config) == "URGENT_BUY")
-    good_price_count = sum(1 for o in offers if get_signal_label(o, config) == "GOOD_PRICE")
-    normal_count = sum(1 for o in offers if get_signal_label(o, config) == "NORMAL")
+
+    tier_list = [(o, get_market_tier(o, market_median, config)) for o in offers]
+    tier_counts = {t: sum(1 for _, v in tier_list if v == t) for t in ("suspicious", "buy", "at_market", "above_market", "unknown")}
 
     lines = [
         "# RTX 5070 Ti offers",
@@ -346,72 +378,93 @@ def render_results_markdown(offers: list[ProductOffer], source_stats: list[dict[
         "## Summary",
         "",
         f"- Checked at: {checked_at}",
-        f"- Total offers after filter: {len(offers)}",
+        f"- Total offers: {len(offers)}",
         f"- Min price: {min_price}",
-        f"- urgent_buy count: {urgent_count}",
-        f"- good_price count: {good_price_count}",
-        f"- normal count: {normal_count}",
+        f"- buy: {tier_counts['buy']}",
+        f"- at_market: {tier_counts['at_market']}",
+        f"- above_market: {tier_counts['above_market']}",
+        f"- suspicious: {tier_counts['suspicious']}",
         f"- best offer: {offers[0].price:.0f} {offers[0].currency} | {offers[0].source} | {offers[0].title} | {offers[0].url}" if offers else "- best offer: n/a",
         "",
+    ]
+
+    if market_median is not None:
+        reliability = "reliable" if market_median.reliable else "low confidence (fallback to current run)"
+        lines.extend([
+            "## Market median",
+            "",
+            f"- Median: {market_median.value:.0f} RUB",
+            f"- Window: {market_median.window_days} days" if market_median.window_days else "- Window: current run only",
+            f"- Points: {market_median.point_count}",
+            f"- Source: {market_median.source} ({reliability})",
+            "",
+        ])
+    else:
+        lines.extend(["## Market median", "", "- n/a (no price data)", "", ])
+
+    lines.extend([
         "## Config",
         "",
-        f"- max_price_rub: {config['max_price_rub']}",
         f"- new_good_price: {config['new_good_price']}",
         f"- new_urgent_buy: {config['new_urgent_buy']}",
         f"- used_good_price: {config['used_good_price']}",
         f"- used_urgent_buy: {config['used_urgent_buy']}",
+        f"- median_window_days: {config['median_window_days']}",
+        f"- suspicious_pct: {config['suspicious_pct']}",
+        f"- buy_pct: {config['buy_pct']}",
+        f"- at_market_pct: {config['at_market_pct']}",
         "",
-        "## Best offers",
+        "## Source summary",
         "",
-    ]
-
-    best_offers = [o for o in offers if get_signal_label(o, config) in {"URGENT_BUY", "GOOD_PRICE"}]
-    if best_offers:
-        lines.extend(
-            [
-                "| Source | Title | Price | Condition | Availability | Signal | URL |",
-                "|---|---|---:|---|---|---|---|",
-            ]
-        )
-        for o in best_offers:
-            lines.append(
-                f"| {o.source} | {o.title.replace('|', '/')} | {o.price:.0f} {o.currency} | {o.condition} | {o.availability} | {get_signal_label(o, config)} | {o.url} |"
-            )
-    else:
-        lines.append("No urgent/good-price offers found.")
-
-    lines.extend(
-        [
-            "",
-            "## Source summary",
-            "",
-            "| Source | Classification | Raw offers | Filtered offers | Reason | Warnings |",
-            "|---|---|---:|---:|---|---|",
-        ]
-    )
+        "| Source | Classification | Raw offers | Filtered offers | Reason | Warnings |",
+        "|---|---|---:|---:|---|---|",
+    ])
 
     for stat in source_stats:
         lines.append(_format_source_summary_markdown_row(stat))
 
-    lines.extend(
-        [
-            "",
-            "## Offers",
-            "",
-            "| Source | Title | Price | Condition | Availability | Signal | URL |",
-            "|---|---|---:|---|---|---|---|",
-        ]
-    )
+    lines.append("")
 
-    for o in offers:
-        lines.append(
-            f"| {o.source} | {o.title.replace('|', '/')} | {o.price:.0f} {o.currency} | {o.condition} | {o.availability} | {get_signal_label(o, config)} | {o.url} |"
-        )
+    offer_table_header = [
+        "| Source | Title | Price | Condition | Availability | Tier | URL |",
+        "|---|---|---:|---|---|---|---|",
+    ]
+
+    tier_labels = [("buy", "## Buy"), ("at_market", "## At market"), ("above_market", "## Above market"), ("suspicious", "## Suspicious")]
+    for tier_key, heading in tier_labels:
+        tier_offers = [o for o, t in tier_list if t == tier_key]
+        lines.append(f"{heading} ({len(tier_offers)})")
+        lines.append("")
+        if tier_offers:
+            lines.extend(offer_table_header)
+            for o in tier_offers:
+                lines.append(
+                    f"| {o.source} | {o.title.replace('|', '/')} | {o.price:.0f} {o.currency} | {o.condition} | {o.availability} | {tier_key} | {o.url} |"
+                )
+        else:
+            lines.append("(none)")
+        lines.append("")
+
+    unknown_offers = [o for o, t in tier_list if t == "unknown"]
+    if unknown_offers:
+        lines.append(f"## Unknown tier ({len(unknown_offers)})")
+        lines.append("")
+        lines.extend(offer_table_header)
+        for o in unknown_offers:
+            lines.append(
+                f"| {o.source} | {o.title.replace('|', '/')} | {o.price:.0f} {o.currency} | {o.condition} | {o.availability} | unknown | {o.url} |"
+            )
+        lines.append("")
 
     return "\n".join(lines) + "\n"
 
 
-def save_reports(offers: list[ProductOffer], source_stats: list[dict[str, Any]] | None = None, config: dict[str, int] | None = None) -> None:
+def save_reports(
+    offers: list[ProductOffer],
+    source_stats: list[dict[str, Any]] | None = None,
+    config: dict[str, int] | None = None,
+    market_median: MarketMedian | None = None,
+) -> None:
     if source_stats is None:
         source_stats = []
     if config is None:
@@ -429,7 +482,7 @@ def save_reports(offers: list[ProductOffer], source_stats: list[dict[str, Any]] 
         for x in offers:
             w.writerow(asdict(x))
 
-    Path("results.md").write_text(render_results_markdown(offers, source_stats, config), encoding="utf-8")
+    Path("results.md").write_text(render_results_markdown(offers, source_stats, config, market_median), encoding="utf-8")
 
     urgent = [o for o in offers if classify_signal(o) == "urgent_buy"]
     Path("urgent_deals.md").write_text(render_markdown(urgent, config), encoding="utf-8")
@@ -670,7 +723,12 @@ def main() -> None:
         )
 
     filtered = deduplicate_offers(filter_offers(collected, config))
-    save_reports(filtered, source_stats, config)
+    market_median = compute_market_median(
+        [o.price for o in filtered],
+        window_days=config["median_window_days"],
+        min_count=config["median_min_count"],
+    )
+    save_reports(filtered, source_stats, config, market_median)
     notify_telegram(filtered, source_stats, daily_report=args.daily_report, config=config)
 
     print("Source summary:")

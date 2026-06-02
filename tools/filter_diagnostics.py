@@ -17,8 +17,6 @@ def reject_reason(offer: ProductOffer, config: dict[str, int] | None = None) -> 
         return "invalid_price"
     if offer.currency.upper() != "RUB":
         return "non_rub_currency"
-    if offer.price > config["max_price_rub"]:
-        return "price_above_max"
     url = offer.url.lower()
     if "?q=" in url or "?text=" in url or "/search" in url:
         return "search_url"

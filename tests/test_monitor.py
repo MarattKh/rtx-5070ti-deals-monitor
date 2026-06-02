@@ -611,29 +611,31 @@ def test_get_signal_label_for_new_good_and_urgent():
     assert get_signal_label(normal) == "NORMAL"
 
 
-def test_results_md_contains_signal_column_and_best_offers(tmp_path, monkeypatch):
+def test_results_md_contains_tier_sections_and_summary(tmp_path, monkeypatch):
     import monitor_5070_ti_v_2 as mon
+    from price_oracle import MarketMedian
+
+    market_median = MarketMedian(value=100_000, source="history", window_days=30, point_count=5, reliable=True)
 
     monkeypatch.chdir(tmp_path)
     mon.save_reports(
         [
-            mk_offer("RTX 5070 Ti Urgent", price=75000),
-            mk_offer("RTX 5070 Ti Good", price=90000),
-            mk_offer("RTX 5070 Ti Normal", price=100000),
+            mk_offer("RTX 5070 Ti Cheap", price=75_000),
+            mk_offer("RTX 5070 Ti Mid", price=95_000),
+            mk_offer("RTX 5070 Ti Expensive", price=120_000),
         ],
         [{"source": "DNS", "raw_count": 3, "filtered_count": 3, "error": ""}],
+        market_median=market_median,
     )
 
     content = Path("results.md").read_text(encoding="utf-8")
-    assert "- urgent_buy count: 1" in content
-    assert "- good_price count: 1" in content
-    assert "- normal count: 1" in content
+    assert "- buy:" in content
+    assert "- at_market:" in content
+    assert "- above_market:" in content
     assert "- best offer:" in content
-    assert "## Best offers" in content
+    assert "## Buy" in content
     assert "## Source summary" in content
-    assert "| Source | Title | Price | Condition | Availability | Signal | URL |" in content
-    assert "URGENT_BUY" in content
-    assert "GOOD_PRICE" in content
+    assert "| Source | Title | Price | Condition | Availability | Tier | URL |" in content
     assert "https://example.com/product/1" in content
 
 
@@ -907,7 +909,7 @@ def test_daily_report_cli_flag_passed_to_notify(monkeypatch):
     captured = {}
 
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
-    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None: None)
+    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None, market_median=None: None)
     monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: captured.update({"daily_report": daily_report}))
     monkeypatch.setattr(mon.dns, "parse_offers", lambda browser_mode=False: [])
     monkeypatch.setattr(mon.dns, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
@@ -935,7 +937,7 @@ def test_main_retries_blocked_dns_with_browser_fallback_success(monkeypatch):
         return {"offers": [], "blocked": True, "block_reason": "401 unauthorized", "warnings": ["DNS blocked"], "errors": 0}
 
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
-    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None: captured.update({"offers": offers, "source_stats": source_stats}))
+    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None, market_median=None: captured.update({"offers": offers, "source_stats": source_stats}))
     monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: None)
     monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
     monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
@@ -967,7 +969,7 @@ def test_main_preserves_original_block_when_browser_fallback_has_no_offers(monke
         return {"offers": [], "blocked": True, "block_reason": "401 unauthorized", "warnings": ["DNS blocked"], "errors": 0}
 
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
-    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None: captured.update({"offers": offers, "source_stats": source_stats}))
+    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None, market_median=None: captured.update({"offers": offers, "source_stats": source_stats}))
     monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: None)
     monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
     monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
@@ -997,7 +999,7 @@ def test_main_does_not_retry_when_browser_mode_was_requested(monkeypatch):
         return {"offers": [], "blocked": True, "block_reason": "browser blocked", "warnings": ["still blocked"], "errors": 0}
 
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
-    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None: captured.update({"source_stats": source_stats}))
+    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None, market_median=None: captured.update({"source_stats": source_stats}))
     monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: None)
     monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
     monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
@@ -1075,7 +1077,7 @@ def test_main_attempts_multiple_existing_sources_and_isolates_failures(monkeypat
     failing_source = types.SimpleNamespace(parse_offers=failing_parse)
 
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
-    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None: captured.update({"offers": offers, "source_stats": source_stats}))
+    monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None, market_median=None: captured.update({"offers": offers, "source_stats": source_stats}))
     monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: None)
     set_enabled_sources(monkeypatch, mon, (("М.Видео", working_source), ("Эльдорадо", failing_source)))
     monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py"])
@@ -1101,11 +1103,11 @@ def test_load_config_uses_values_from_file(tmp_path):
     import monitor_5070_ti_v_2 as mon
 
     path = tmp_path / "config.json"
-    path.write_text(json.dumps({"new_good_price": 95000, "max_price_rub": 120000}), encoding="utf-8")
+    path.write_text(json.dumps({"new_good_price": 95000, "median_window_days": 14}), encoding="utf-8")
 
     cfg = mon.load_config(path)
     assert cfg["new_good_price"] == 95000
-    assert cfg["max_price_rub"] == 120000
+    assert cfg["median_window_days"] == 14
 
 
 def test_load_config_fallbacks_for_missing_keys(tmp_path):
@@ -1121,17 +1123,16 @@ def test_load_config_fallbacks_for_missing_keys(tmp_path):
     assert cfg["used_good_price"] == mon.DEFAULT_CONFIG["used_good_price"]
 
 
-def test_filter_offers_uses_max_price_from_config():
+def test_filter_offers_no_longer_rejects_above_market_price():
     import monitor_5070_ti_v_2 as mon
 
-    cfg = mon.DEFAULT_CONFIG.copy()
-    cfg["max_price_rub"] = 95000
+    # Price ceiling removed — all valid GPU offers pass regardless of price
+    cheap = mk_offer("RTX 5070 Ti", price=80_000)
+    expensive = mk_offer("RTX 5070 Ti", price=200_000)
 
-    accepted = mk_offer("RTX 5070 Ti", price=94000)
-    rejected = mk_offer("RTX 5070 Ti", price=96000)
-
-    filtered = mon.filter_offers([accepted, rejected], cfg)
-    assert filtered == [accepted]
+    filtered = mon.filter_offers([cheap, expensive], mon.DEFAULT_CONFIG.copy())
+    assert cheap in filtered
+    assert expensive in filtered
 
 
 def test_classify_signal_uses_config_thresholds():
@@ -1158,7 +1159,8 @@ def test_results_md_contains_config_thresholds(tmp_path, monkeypatch):
     content = Path("results.md").read_text(encoding="utf-8")
     assert "## Config" in content
     assert "- new_good_price: 95000" in content
-    assert "- max_price_rub:" in content
+    assert "- suspicious_pct:" in content
+    assert "- buy_pct:" in content
 
 
 def test_daily_report_telegram_contains_threshold_line(monkeypatch):
@@ -1292,3 +1294,188 @@ def test_citilink_smoke_counts_fixture_candidates():
     assert counts["snippet_titles"] == 3
     assert counts["snippet_prices"] == 3
     assert counts["parsed_cards"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Market-median price classification tests
+# ---------------------------------------------------------------------------
+
+def test_classify_market_tier_boundary_minus35pct():
+    from price_oracle import classify_market_tier, TIER_BUY, TIER_SUSPICIOUS
+
+    # median=100_000; suspicious_pct=65 → boundary at 65_000 (inclusive for buy)
+    assert classify_market_tier(65_000, 100_000) == TIER_BUY       # exactly −35% → buy
+    assert classify_market_tier(64_999, 100_000) == TIER_SUSPICIOUS  # one below → suspicious
+
+
+def test_classify_market_tier_boundary_minus10pct():
+    from price_oracle import classify_market_tier, TIER_BUY, TIER_AT_MARKET
+
+    # buy_pct=90 → upper bound at 90_000 (inclusive for buy)
+    assert classify_market_tier(90_000, 100_000) == TIER_BUY       # exactly −10% → buy
+    assert classify_market_tier(90_001, 100_000) == TIER_AT_MARKET  # one above → at_market
+
+
+def test_classify_market_tier_boundary_plus10pct():
+    from price_oracle import classify_market_tier, TIER_AT_MARKET, TIER_ABOVE_MARKET
+
+    # at_market_pct=110 → upper bound at 110_000 (inclusive for at_market)
+    assert classify_market_tier(110_000, 100_000) == TIER_AT_MARKET   # exactly +10% → at_market
+    assert classify_market_tier(110_001, 100_000) == TIER_ABOVE_MARKET  # one above → above_market
+
+
+def test_compute_market_median_from_history(tmp_path):
+    import json
+    from datetime import datetime, timezone
+    from price_oracle import compute_market_median
+
+    history = tmp_path / "price_history.jsonl"
+    ts = "2026-06-01T10:00:00+00:00"
+    prices = [90_000, 95_000, 100_000, 105_000, 110_000]
+    history.write_text(
+        "\n".join(
+            json.dumps({"timestamp": ts, "source": "DNS", "title": "RTX 5070 Ti", "price": p, "currency": "RUB"})
+            for p in prices
+        ),
+        encoding="utf-8",
+    )
+
+    now = datetime(2026, 6, 2, 0, 0, 0, tzinfo=timezone.utc)
+    result = compute_market_median([], history_path=history, window_days=30, min_count=5, now=now)
+
+    assert result is not None
+    assert result.value == 100_000.0
+    assert result.reliable is True
+    assert result.source == "history"
+    assert result.point_count == 5
+
+
+def test_compute_market_median_fallback_to_current_run(tmp_path):
+    from datetime import datetime, timezone
+    from price_oracle import compute_market_median
+
+    history = tmp_path / "price_history.jsonl"
+    history.write_text("", encoding="utf-8")  # empty
+
+    now = datetime(2026, 6, 2, 0, 0, 0, tzinfo=timezone.utc)
+    current_prices = [90_000.0, 100_000.0, 110_000.0]
+    result = compute_market_median(current_prices, history_path=history, min_count=5, now=now)
+
+    assert result is not None
+    assert result.reliable is False
+    assert result.source == "current_run"
+    assert result.value == 100_000.0
+
+
+def test_compute_market_median_returns_none_when_no_data(tmp_path):
+    from datetime import datetime, timezone
+    from price_oracle import compute_market_median
+
+    history = tmp_path / "price_history.jsonl"
+    history.write_text("", encoding="utf-8")
+
+    now = datetime(2026, 6, 2, 0, 0, 0, tzinfo=timezone.utc)
+    result = compute_market_median([], history_path=history, now=now)
+
+    assert result is None
+
+
+def test_filter_does_not_reject_accessory_high_price_offer():
+    """Removing the price ceiling must not let non-GPU accessories through."""
+    import monitor_5070_ti_v_2 as mon
+
+    accessory = mk_offer("Gaming PC RTX 5070 Ti", price=50_000)
+    gpu = mk_offer("Видеокарта RTX 5070 Ti", price=200_000)
+
+    filtered = mon.filter_offers([accessory, gpu], mon.DEFAULT_CONFIG.copy())
+    assert accessory not in filtered  # accessory filter still works
+    assert gpu in filtered             # expensive GPU passes now
+
+
+def test_end_to_end_yandex_offer_above_market(tmp_path, monkeypatch):
+    """138 217 ₽ Яндекс-оффер saved as above_market, not dropped by price filter."""
+    import json
+    from price_oracle import compute_market_median, TIER_ABOVE_MARKET
+    import monitor_5070_ti_v_2 as mon
+
+    yandex_offer = mk_offer(
+        "NVIDIA RTX 5070 Ti 16GB",
+        price=138_217,
+        url="https://market.yandex.ru/product/123",
+        source="Яндекс Маркет",
+    )
+    cheap_offer = mk_offer("RTX 5070 Ti MSI", price=95_000, source="DNS")
+
+    cfg = mon.DEFAULT_CONFIG.copy()
+    filtered = mon.filter_offers([yandex_offer, cheap_offer], cfg)
+    assert yandex_offer in filtered, "138 217 ₽ offer must not be dropped by filter"
+
+    history = tmp_path / "price_history.jsonl"
+    ts = "2026-06-01T10:00:00+00:00"
+    prices = [95_000, 100_000, 105_000, 110_000, 108_000]
+    history.write_text(
+        "\n".join(
+            json.dumps({"timestamp": ts, "price": p, "source": "DNS", "title": "RTX 5070 Ti", "currency": "RUB"})
+            for p in prices
+        ),
+        encoding="utf-8",
+    )
+    from datetime import datetime, timezone
+    now = datetime(2026, 6, 2, 0, 0, 0, tzinfo=timezone.utc)
+    market_median = compute_market_median([], history_path=history, now=now)
+
+    tier = mon.get_market_tier(yandex_offer, market_median, cfg)
+    cheap_tier = mon.get_market_tier(cheap_offer, market_median, cfg)
+
+    assert tier == TIER_ABOVE_MARKET
+    assert cheap_tier in ("buy", "at_market")
+
+
+def test_get_market_tier_uses_config_ratios():
+    import monitor_5070_ti_v_2 as mon
+    from price_oracle import MarketMedian, TIER_BUY, TIER_AT_MARKET, TIER_ABOVE_MARKET
+
+    market_median = MarketMedian(value=100_000, source="history", window_days=30, point_count=10, reliable=True)
+    cfg = mon.DEFAULT_CONFIG.copy()
+
+    assert mon.get_market_tier(mk_offer("RTX 5070 Ti", price=85_000), market_median, cfg) == TIER_BUY
+    assert mon.get_market_tier(mk_offer("RTX 5070 Ti", price=100_000), market_median, cfg) == TIER_AT_MARKET
+    assert mon.get_market_tier(mk_offer("RTX 5070 Ti", price=115_000), market_median, cfg) == TIER_ABOVE_MARKET
+
+
+def test_results_md_shows_market_median_section(tmp_path, monkeypatch):
+    import monitor_5070_ti_v_2 as mon
+    from price_oracle import MarketMedian
+
+    cfg = mon.DEFAULT_CONFIG.copy()
+    market_median = MarketMedian(value=105_000, source="history", window_days=30, point_count=18, reliable=True)
+
+    monkeypatch.chdir(tmp_path)
+    mon.save_reports([mk_offer("RTX 5070 Ti", price=94_800)], [], cfg, market_median)
+
+    content = Path("results.md").read_text(encoding="utf-8")
+    assert "## Market median" in content
+    assert "105000 RUB" in content
+    assert "Points: 18" in content
+    assert "reliable" in content
+
+
+def test_results_md_groups_offers_by_tier(tmp_path, monkeypatch):
+    import monitor_5070_ti_v_2 as mon
+    from price_oracle import MarketMedian
+
+    cfg = mon.DEFAULT_CONFIG.copy()
+    market_median = MarketMedian(value=100_000, source="history", window_days=30, point_count=10, reliable=True)
+
+    buy_offer = mk_offer("RTX 5070 Ti cheap", price=85_000)
+    above_offer = mk_offer("RTX 5070 Ti exp", price=120_000)
+
+    monkeypatch.chdir(tmp_path)
+    mon.save_reports([buy_offer, above_offer], [], cfg, market_median)
+
+    content = Path("results.md").read_text(encoding="utf-8")
+    assert "## Buy" in content
+    assert "## Above market" in content
+    buy_pos = content.index("## Buy")
+    above_pos = content.index("## Above market")
+    assert buy_pos < above_pos  # buy section comes first
