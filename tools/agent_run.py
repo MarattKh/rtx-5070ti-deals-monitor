@@ -140,11 +140,12 @@ class CommandRunner:
             timeout = _timeout_from_env("AGENT_RUN_COMMAND_TIMEOUT_SECONDS", DEFAULT_COMMAND_TIMEOUT_SECONDS)
 
         self.logger.write(f"$ {display}")
+        stdin_kwargs: dict = {"input": input_text} if input_text is not None else {"stdin": subprocess.DEVNULL}
         try:
             proc = subprocess.run(
                 list(args),
                 cwd=self.cwd,
-                input=input_text,
+                **stdin_kwargs,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
@@ -152,6 +153,8 @@ class CommandRunner:
                 timeout=timeout,
             )
         except subprocess.TimeoutExpired as exc:
+            if exc.stdout: self.logger.write(exc.stdout.rstrip())
+            if exc.stderr: self.logger.write(exc.stderr.rstrip())
             raise RunnerError(f"Command timed out after {timeout} seconds: {display}") from exc
         if proc.stdout and not capture:
             self.logger.write(proc.stdout.rstrip())

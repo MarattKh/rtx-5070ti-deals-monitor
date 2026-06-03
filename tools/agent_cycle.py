@@ -71,8 +71,10 @@ class CommandRunner:
             self.logger.write(f"[dry-run] {display}"); return subprocess.CompletedProcess(args, 0, "", "")
         self.logger.write(f"$ {display}")
         try:
-            p = subprocess.run(list(args), cwd=self.cwd, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=900)
+            p = subprocess.run(list(args), stdin=subprocess.DEVNULL, cwd=self.cwd, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=900)
         except subprocess.TimeoutExpired as exc:
+            if exc.stdout: self.logger.write(exc.stdout.rstrip())
+            if exc.stderr: self.logger.write(exc.stderr.rstrip())
             raise CycleError(f"Command timed out: {display}") from exc
         if p.stdout and not capture: self.logger.write(p.stdout.rstrip())
         if p.stderr and not capture: self.logger.write(p.stderr.rstrip())
