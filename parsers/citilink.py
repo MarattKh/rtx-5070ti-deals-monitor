@@ -206,4 +206,9 @@ def parse_offers_with_status(browser_mode: bool = False) -> dict:
 
 
 def parse_offers(browser_mode: bool = False) -> list[ProductOffer]:
-    return parse_offers_with_status(browser_mode)["offers"]
+    status = parse_offers_with_status(browser_mode)
+    if status["offers"] or browser_mode or status["blocked"] or status["errors"]:
+        return status["offers"]
+
+    return parse_offers_with_status(browser_mode=True)["offers"]
+
