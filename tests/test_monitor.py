@@ -850,10 +850,13 @@ def test_notify_telegram_includes_source_summary(monkeypatch):
     )
 
     text = payload["text"]
-    assert "Source summary:" in text
-    assert "DNS: ok; raw 10; filtered 2; reason: ok; warnings: none" in text
-    assert "Ситилинк: ok; raw 8; filtered 1; reason: ok; warnings: none" in text
-    assert "Регард: ok; raw 7; filtered 1; reason: ok; warnings: none" in text
+    assert "Рабочие:" in text
+    assert "DNS (2)" in text
+    assert "Ситилинк (1)" in text
+    assert "Регард (1)" in text
+    assert "raw" not in text
+    assert "filtered" not in text
+    assert "reason" not in text
 
 
 def test_notify_telegram_source_summary_shows_blocked_dns(monkeypatch):
@@ -890,9 +893,13 @@ def test_notify_telegram_source_summary_shows_blocked_dns(monkeypatch):
     )
 
     text = payload["text"]
-    assert "DNS: unavailable; raw 0; filtered 0; reason: blocked: 403 forbidden; warnings: DNS access forbidden. Manual verification required." in text
-    assert "DNS: raw 0 / filtered 0" not in text
-    assert "Ситилинк: ok; raw 8; filtered 1; reason: ok; warnings: none" in text
+    assert "Заблокировано" in text
+    assert "DNS" in text
+    assert "403" in text
+    assert "Рабочие:" in text
+    assert "Ситилинк (1)" in text
+    assert "raw" not in text
+    assert "filtered" not in text
 
 
 def test_notify_telegram_source_summary_shows_blocked_citilink(monkeypatch):
@@ -928,8 +935,101 @@ def test_notify_telegram_source_summary_shows_blocked_citilink(monkeypatch):
     )
 
     text = payload["text"]
-    assert "Ситилинк: unavailable; raw 0; filtered 0; reason: blocked: 429 too many requests; warnings: Citilink access blocked. Manual verification required." in text
-    assert "Ситилинк: raw 0 / filtered 0" not in text
+    assert "Заблокировано" in text
+    assert "Ситилинк" in text
+    assert "429" in text
+    assert "raw" not in text
+    assert "filtered" not in text
+
+
+def test_source_health_ru_working_group():
+    import monitor_5070_ti_v_2 as mon
+
+    lines = mon._build_source_health_ru([
+        {"source": "Ситилинк", "raw_count": 7, "filtered_count": 7, "error": ""},
+        {"source": "Регард", "raw_count": 6, "filtered_count": 1, "error": ""},
+    ])
+    text = "\n".join(lines)
+    assert "Рабочие:" in text
+    assert "Ситилинк (7)" in text
+    assert "Регард (1)" in text
+    assert "Молчат" not in text
+    assert "Заблокировано" not in text
+
+
+def test_source_health_ru_silent_group():
+    import monitor_5070_ti_v_2 as mon
+
+    lines = mon._build_source_health_ru([
+        {"source": "М.Видео", "raw_count": 0, "filtered_count": 0, "error": ""},
+        {"source": "Ozon", "raw_count": 0, "filtered_count": 0, "error": ""},
+    ])
+    text = "\n".join(lines)
+    assert "Молчат:" in text
+    assert "М.Видео" in text
+    assert "Ozon" in text
+    assert "Рабочие" not in text
+    assert "raw" not in text
+    assert "no offers" not in text
+
+
+def test_source_health_ru_blocked_group():
+    import monitor_5070_ti_v_2 as mon
+
+    lines = mon._build_source_health_ru([
+        {
+            "source": "DNS",
+            "raw_count": 0,
+            "filtered_count": 0,
+            "error": "",
+            "blocked": True,
+            "block_reason": "403 forbidden",
+            "warnings": ["DNS access forbidden. Manual verification required."],
+        },
+    ])
+    text = "\n".join(lines)
+    assert "Заблокировано" in text
+    assert "DNS" in text
+    assert "403" in text
+    assert "blocked:" not in text
+    assert "warnings" not in text
+
+
+def test_source_health_ru_no_english_labels_in_daily_report(monkeypatch):
+    import sys
+    import types
+    import monitor_5070_ti_v_2 as mon
+    from price_oracle import MarketMedian
+
+    payload = {}
+
+    def fake_post(url, data, timeout):
+        payload["text"] = data["text"]
+
+    monkeypatch.setenv("TG_BOT_TOKEN", "token")
+    monkeypatch.setenv("TG_CHAT_ID", "chat")
+    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
+
+    median = MarketMedian(value=100_000, source="history", window_days=30, point_count=5, reliable=True)
+    mon.notify_telegram(
+        [mk_offer("RTX 5070 Ti", price=90000)],
+        [
+            {"source": "Ситилинк", "raw_count": 5, "filtered_count": 5, "error": ""},
+            {"source": "Wildberries", "raw_count": 0, "filtered_count": 0, "error": ""},
+            {
+                "source": "DNS",
+                "raw_count": 0, "filtered_count": 0, "error": "",
+                "blocked": True, "block_reason": "403 forbidden",
+                "warnings": ["DNS access forbidden."],
+            },
+        ],
+        daily_report=True,
+        market_median=median,
+    )
+
+    text = payload["text"]
+    for label in ("Source health:", "Source summary:", "; raw ", "; filtered ", "; reason:", "; warnings:", "no_filtered_offers", "no offers after parsing", "blocked: forbidden"):
+        assert label not in text, f"English label found in Telegram text: {label!r}"
 
 
 def test_notify_telegram_daily_report_sends_even_without_signals(monkeypatch):
@@ -982,7 +1082,7 @@ def test_notify_telegram_daily_report_includes_best_price(monkeypatch):
     assert "Лучшая цена:" in text
     assert "94800" in text
     assert "RTX 5070 Ti cheapest" in text
-    assert "Ситилинк: ok; raw 2; filtered 2; reason: ok; warnings: none" in text
+    assert "Ситилинк (2)" in text
 
 
 def test_notify_telegram_daily_report_handles_no_offers(monkeypatch):

@@ -354,6 +354,54 @@ def _format_source_summary_markdown_row(stat: dict[str, Any]) -> str:
     )
 
 
+def _ru_block_reason(summary: dict[str, Any]) -> str:
+    reason = summary.get("reason", "")
+    if "403" in reason:
+        return "403, нужна ручная проверка"
+    if "401" in reason:
+        return "401, нужна ручная проверка"
+    if "429" in reason:
+        return "429, слишком много запросов"
+    if summary.get("classification") == "error":
+        err = str(summary.get("reason", ""))
+        return f"ошибка: {err[:60]}" if err else "ошибка"
+    warnings = summary.get("warnings", [])
+    if warnings:
+        w = str(warnings[0])
+        if any(k in w.lower() for k in ("forbidden", "blocked", "access")):
+            return "заблокирован"
+        return w[:60]
+    return str(reason)[:60] if reason else "неизвестно"
+
+
+def _build_source_health_ru(source_stats: list[dict[str, Any]]) -> list[str]:
+    working: list[str] = []
+    silent: list[str] = []
+    problems: list[str] = []
+
+    for stat in source_stats:
+        s = summarize_source_stat(stat)
+        name = s["source"]
+        has_problem = s["classification"] in ("unavailable", "error") or bool(s["warnings"])
+
+        if s["classification"] == "ok":
+            working.append(f"{name} ({s['filtered_count']})")
+        elif has_problem:
+            problems.append(f"{name} — {_ru_block_reason(s)}")
+        else:
+            silent.append(name)
+
+    lines: list[str] = []
+    if working:
+        lines.append("Рабочие: " + ", ".join(working))
+    if silent:
+        lines.append("Молчат: " + ", ".join(silent))
+    if problems:
+        lines.append("Заблокировано / Проблемы:")
+        lines.extend(f"  {p}" for p in problems)
+    return lines
+
+
 def _tier_order(tier: str) -> int:
     return {"buy": 0, "suspicious": 1, "at_market": 2, "above_market": 3}.get(tier, 4)
 
@@ -563,7 +611,7 @@ def build_telegram_signal_text(
                 "",
             ])
 
-    _append_source_summary(lines, source_stats)
+    lines.extend(_build_source_health_ru(source_stats))
     lines.append("")
     lines.append(f"Всего buy-сигналов: {len(buy_offers)}")
     return "\n".join(lines)[:4000]
@@ -635,7 +683,7 @@ def build_telegram_daily_report_text(
     else:
         lines.extend(["Лучшая цена: n/a", ""])
 
-    _append_source_summary(lines, source_stats, heading="Source health:")
+    lines.extend(_build_source_health_ru(source_stats))
     lines.append("")
     lines.append(f"Всего офферов: {len(offers)}")
     return "\n".join(lines)[:4000]
