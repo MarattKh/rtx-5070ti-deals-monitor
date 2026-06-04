@@ -710,10 +710,11 @@ def test_notify_telegram_reads_agent_notify_env_vars(monkeypatch):
     assert "agent-token" in calls[0]["url"]
 
 
-def test_notify_telegram_sends_good_and_urgent_only(monkeypatch):
+def test_notify_telegram_sends_buy_tier_only(monkeypatch):
     import sys
     import types
     import monitor_5070_ti_v_2 as mon
+    from price_oracle import MarketMedian
 
     calls = []
 
@@ -724,25 +725,53 @@ def test_notify_telegram_sends_good_and_urgent_only(monkeypatch):
     monkeypatch.setenv("TG_CHAT_ID", "chat")
     monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
 
+    median = MarketMedian(value=100_000, source="history", window_days=30, point_count=5, reliable=True)
     mon.notify_telegram(
         [
-            mk_offer("RTX 5070 Ti urgent", price=75000),
-            mk_offer("RTX 5070 Ti good", price=90000),
-            mk_offer("RTX 5070 Ti normal", price=100000),
-        ]
+            mk_offer("RTX 5070 Ti buy1", price=75000),
+            mk_offer("RTX 5070 Ti buy2", price=90000),
+            mk_offer("RTX 5070 Ti at_market", price=100000),
+        ],
+        market_median=median,
     )
 
     assert len(calls) == 1
     text = calls[0]["data"]["text"]
-    assert "URGENT_BUY" in text
-    assert "GOOD_PRICE" in text
-    assert "RTX 5070 Ti normal" not in text
+    assert "buy" in text
+    assert "RTX 5070 Ti buy1" in text
+    assert "RTX 5070 Ti buy2" in text
+    assert "RTX 5070 Ti at_market" not in text
 
 
-def test_notify_telegram_orders_urgent_before_good_price(monkeypatch):
+def test_notify_telegram_no_signal_above_buy_threshold(monkeypatch):
     import sys
     import types
     import monitor_5070_ti_v_2 as mon
+    from price_oracle import MarketMedian
+
+    calls = []
+
+    def fake_post(url, data, timeout):
+        calls.append((url, data))
+
+    monkeypatch.setenv("TG_BOT_TOKEN", "token")
+    monkeypatch.setenv("TG_CHAT_ID", "chat")
+    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
+
+    median = MarketMedian(value=100_000, source="history", window_days=30, point_count=5, reliable=True)
+    mon.notify_telegram(
+        [mk_offer("above threshold", price=95000)],
+        market_median=median,
+    )
+
+    assert calls == []
+
+
+def test_notify_telegram_suspicious_shown_with_warning(monkeypatch):
+    import sys
+    import types
+    import monitor_5070_ti_v_2 as mon
+    from price_oracle import MarketMedian
 
     payload = {}
 
@@ -753,23 +782,52 @@ def test_notify_telegram_orders_urgent_before_good_price(monkeypatch):
     monkeypatch.setenv("TG_CHAT_ID", "chat")
     monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
 
+    median = MarketMedian(value=100_000, source="history", window_days=30, point_count=5, reliable=True)
     mon.notify_telegram(
-        [
-            mk_offer("good lower", price=85000),
-            mk_offer("urgent", price=75000),
-            mk_offer("good higher", price=90000),
-        ]
+        [mk_offer("RTX 5070 Ti suspicious", price=60000)],
+        market_median=median,
     )
 
     text = payload["text"]
-    assert text.index("URGENT_BUY") < text.index("GOOD_PRICE")
-    assert text.index("good lower") < text.index("good higher")
+    assert "suspicious" in text
+    assert "скам" in text
+    assert "RTX 5070 Ti suspicious" in text
+
+
+def test_notify_telegram_orders_buy_offers_by_price(monkeypatch):
+    import sys
+    import types
+    import monitor_5070_ti_v_2 as mon
+    from price_oracle import MarketMedian
+
+    payload = {}
+
+    def fake_post(url, data, timeout):
+        payload["text"] = data["text"]
+
+    monkeypatch.setenv("TG_BOT_TOKEN", "token")
+    monkeypatch.setenv("TG_CHAT_ID", "chat")
+    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
+
+    median = MarketMedian(value=100_000, source="history", window_days=30, point_count=5, reliable=True)
+    mon.notify_telegram(
+        [
+            mk_offer("mid price", price=85000),
+            mk_offer("lowest price", price=75000),
+            mk_offer("highest buy", price=90000),
+        ],
+        market_median=median,
+    )
+
+    text = payload["text"]
+    assert text.index("lowest price") < text.index("mid price") < text.index("highest buy")
 
 
 def test_notify_telegram_includes_source_summary(monkeypatch):
     import sys
     import types
     import monitor_5070_ti_v_2 as mon
+    from price_oracle import MarketMedian
 
     payload = {}
 
@@ -780,6 +838,7 @@ def test_notify_telegram_includes_source_summary(monkeypatch):
     monkeypatch.setenv("TG_CHAT_ID", "chat")
     monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
 
+    median = MarketMedian(value=100_000, source="history", window_days=30, point_count=5, reliable=True)
     mon.notify_telegram(
         [mk_offer("RTX 5070 Ti good", price=90000)],
         [
@@ -787,6 +846,7 @@ def test_notify_telegram_includes_source_summary(monkeypatch):
             {"source": "Ситилинк", "raw_count": 8, "filtered_count": 1, "error": ""},
             {"source": "Регард", "raw_count": 7, "filtered_count": 1, "error": ""},
         ],
+        market_median=median,
     )
 
     text = payload["text"]
@@ -800,6 +860,7 @@ def test_notify_telegram_source_summary_shows_blocked_dns(monkeypatch):
     import sys
     import types
     import monitor_5070_ti_v_2 as mon
+    from price_oracle import MarketMedian
 
     payload = {}
 
@@ -810,6 +871,7 @@ def test_notify_telegram_source_summary_shows_blocked_dns(monkeypatch):
     monkeypatch.setenv("TG_CHAT_ID", "chat")
     monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
 
+    median = MarketMedian(value=100_000, source="history", window_days=30, point_count=5, reliable=True)
     mon.notify_telegram(
         [mk_offer("RTX 5070 Ti good", price=90000)],
         [
@@ -824,6 +886,7 @@ def test_notify_telegram_source_summary_shows_blocked_dns(monkeypatch):
             },
             {"source": "Ситилинк", "raw_count": 8, "filtered_count": 1, "error": ""},
         ],
+        market_median=median,
     )
 
     text = payload["text"]
@@ -836,6 +899,7 @@ def test_notify_telegram_source_summary_shows_blocked_citilink(monkeypatch):
     import sys
     import types
     import monitor_5070_ti_v_2 as mon
+    from price_oracle import MarketMedian
 
     payload = {}
 
@@ -846,6 +910,7 @@ def test_notify_telegram_source_summary_shows_blocked_citilink(monkeypatch):
     monkeypatch.setenv("TG_CHAT_ID", "chat")
     monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
 
+    median = MarketMedian(value=100_000, source="history", window_days=30, point_count=5, reliable=True)
     mon.notify_telegram(
         [mk_offer("RTX 5070 Ti good", price=90000)],
         [
@@ -859,6 +924,7 @@ def test_notify_telegram_source_summary_shows_blocked_citilink(monkeypatch):
                 "warnings": ["Citilink access blocked. Manual verification required."],
             },
         ],
+        market_median=median,
     )
 
     text = payload["text"]
@@ -885,9 +951,8 @@ def test_notify_telegram_daily_report_sends_even_without_signals(monkeypatch):
     assert len(calls) == 1
     text = calls[0]["data"]["text"]
     assert "📊 RTX 5070 Ti daily report" in text
-    assert "Signals:" in text
-    assert "- total: 0" in text
-    assert "Total filtered offers: 1" in text
+    assert "Buy-сигналов нет" in text
+    assert "Всего офферов: 1" in text
 
 
 def test_notify_telegram_daily_report_includes_best_price(monkeypatch):
@@ -914,8 +979,8 @@ def test_notify_telegram_daily_report_includes_best_price(monkeypatch):
     )
 
     text = payload["text"]
-    assert "Best overall price:" in text
-    assert "94800 RUB - DNS" in text
+    assert "Лучшая цена:" in text
+    assert "94800" in text
     assert "RTX 5070 Ti cheapest" in text
     assert "Ситилинк: ok; raw 2; filtered 2; reason: ok; warnings: none" in text
 
@@ -937,8 +1002,8 @@ def test_notify_telegram_daily_report_handles_no_offers(monkeypatch):
     mon.notify_telegram([], [], daily_report=True)
 
     text = payload["text"]
-    assert "Best overall price: n/a" in text
-    assert "Total filtered offers: 0" in text
+    assert "Лучшая цена: n/a" in text
+    assert "Всего офферов: 0" in text
 
 
 def test_daily_report_cli_flag_passed_to_notify(monkeypatch):
@@ -948,7 +1013,7 @@ def test_daily_report_cli_flag_passed_to_notify(monkeypatch):
 
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
     monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None, market_median=None: None)
-    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: captured.update({"daily_report": daily_report}))
+    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None, market_median=None: captured.update({"daily_report": daily_report}))
     monkeypatch.setattr(mon.dns, "parse_offers", lambda browser_mode=False: [])
     monkeypatch.setattr(mon.dns, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
     monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
@@ -976,7 +1041,7 @@ def test_main_retries_blocked_dns_with_browser_fallback_success(monkeypatch):
 
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
     monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None, market_median=None: captured.update({"offers": offers, "source_stats": source_stats}))
-    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: None)
+    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None, market_median=None: None)
     monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
     monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
     monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
@@ -1008,7 +1073,7 @@ def test_main_preserves_original_block_when_browser_fallback_has_no_offers(monke
 
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
     monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None, market_median=None: captured.update({"offers": offers, "source_stats": source_stats}))
-    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: None)
+    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None, market_median=None: None)
     monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
     monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
     monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
@@ -1038,7 +1103,7 @@ def test_main_does_not_retry_when_browser_mode_was_requested(monkeypatch):
 
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
     monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None, market_median=None: captured.update({"source_stats": source_stats}))
-    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: None)
+    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None, market_median=None: None)
     monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
     monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
     monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
@@ -1116,7 +1181,7 @@ def test_main_attempts_multiple_existing_sources_and_isolates_failures(monkeypat
 
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
     monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None, market_median=None: captured.update({"offers": offers, "source_stats": source_stats}))
-    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None: None)
+    monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None, market_median=None: None)
     set_enabled_sources(monkeypatch, mon, (("М.Видео", working_source), ("Эльдорадо", failing_source)))
     monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py"])
 
@@ -1201,7 +1266,7 @@ def test_results_md_contains_config_thresholds(tmp_path, monkeypatch):
     assert "- buy_pct:" in content
 
 
-def test_daily_report_telegram_contains_threshold_line(monkeypatch):
+def test_daily_report_telegram_shows_median_tier_counts(monkeypatch):
     import sys
     import types
     import monitor_5070_ti_v_2 as mon
@@ -1212,8 +1277,7 @@ def test_daily_report_telegram_contains_threshold_line(monkeypatch):
         payload["text"] = data["text"]
 
     cfg = mon.DEFAULT_CONFIG.copy()
-    cfg["new_good_price"] = 95000
-    cfg["new_urgent_buy"] = 80000
+    cfg["buy_pct"] = 85
 
     monkeypatch.setenv("TG_BOT_TOKEN", "token")
     monkeypatch.setenv("TG_CHAT_ID", "chat")
@@ -1221,7 +1285,8 @@ def test_daily_report_telegram_contains_threshold_line(monkeypatch):
 
     mon.notify_telegram([mk_offer("RTX 5070 Ti", price=94800)], [], daily_report=True, config=cfg)
 
-    assert "- thresholds: good <= 95000 RUB, urgent <= 80000 RUB" in payload["text"]
+    assert "- buy (≤85%)" in payload["text"]
+    assert "Медиана рынка:" in payload["text"]
 
 
 def test_dns_detects_http_403_browser_html():

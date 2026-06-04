@@ -499,13 +499,16 @@ def save_reports(
         logging.getLogger("price_history").exception("failed to append price history: %s", exc)
 
 
-def _telegram_signal_offers(offers: list[ProductOffer], config: dict[str, int] | None = None) -> list[ProductOffer]:
+def _telegram_signal_offers(
+    offers: list[ProductOffer],
+    market_median: MarketMedian | None,
+    config: dict[str, int] | None = None,
+) -> list[ProductOffer]:
     if config is None:
         config = load_config()
-    priority = {"urgent_buy": 0, "good_price": 1}
-    interesting = [o for o in offers if classify_signal(o, config) in {"urgent_buy", "good_price"}]
-    interesting.sort(key=lambda o: (priority[classify_signal(o, config) or "good_price"], o.price))
-    return interesting
+    buy = [o for o in offers if get_market_tier(o, market_median, config) == "buy"]
+    buy.sort(key=lambda o: o.price)
+    return buy
 
 
 def _append_source_summary(lines: list[str], source_stats: list[dict[str, Any]], heading: str = "Source summary:") -> None:
@@ -517,82 +520,124 @@ def _append_source_summary(lines: list[str], source_stats: list[dict[str, Any]],
         lines.append("n/a")
 
 
-def build_telegram_signal_text(offers: list[ProductOffer], source_stats: list[dict[str, Any]] | None = None, config: dict[str, int] | None = None) -> str | None:
+def build_telegram_signal_text(
+    offers: list[ProductOffer],
+    source_stats: list[dict[str, Any]] | None = None,
+    config: dict[str, int] | None = None,
+    market_median: MarketMedian | None = None,
+) -> str | None:
     if source_stats is None:
         source_stats = []
-
     if config is None:
         config = load_config()
 
-    interesting = _telegram_signal_offers(offers, config)
-    if not interesting:
+    buy_offers = _telegram_signal_offers(offers, market_median, config)
+    suspicious_offers = sorted(
+        [o for o in offers if get_market_tier(o, market_median, config) == "suspicious"],
+        key=lambda o: o.price,
+    )
+
+    if not buy_offers and not suspicious_offers:
         return None
 
-    top_items = interesting[:10]
-    lines = ["⚡ RTX 5070 Ti мониторинг", "", "Best signals:"]
-    for idx, offer in enumerate(top_items, start=1):
-        lines.extend(
-            [
-                f"{idx}. {get_signal_label(offer)} — {offer.price:.0f} RUB — {offer.source}",
+    median_str = f"{market_median.value:.0f} RUB" if market_median else "n/a"
+    lines = ["⚡ RTX 5070 Ti мониторинг", "", f"Медиана рынка: {median_str}", ""]
+
+    if buy_offers:
+        lines.append(f"Сигналы к покупке (≤{config['buy_pct']}% медианы):")
+        for idx, offer in enumerate(buy_offers[:10], start=1):
+            lines.extend([
+                f"{idx}. buy — {offer.price:.0f} RUB — {offer.source}",
                 offer.title,
                 offer.url,
                 "",
-            ]
-        )
+            ])
+
+    if suspicious_offers:
+        lines.append("⚠️ Очень дёшево — проверить, возможен скам:")
+        for idx, offer in enumerate(suspicious_offers[:5], start=1):
+            lines.extend([
+                f"{idx}. suspicious — {offer.price:.0f} RUB — {offer.source}",
+                offer.title,
+                offer.url,
+                "",
+            ])
 
     _append_source_summary(lines, source_stats)
     lines.append("")
-    lines.append(f"Total signals: {len(interesting)}")
+    lines.append(f"Всего buy-сигналов: {len(buy_offers)}")
     return "\n".join(lines)[:4000]
 
 
-def build_telegram_daily_report_text(offers: list[ProductOffer], source_stats: list[dict[str, Any]] | None = None, config: dict[str, int] | None = None) -> str:
+def build_telegram_daily_report_text(
+    offers: list[ProductOffer],
+    source_stats: list[dict[str, Any]] | None = None,
+    config: dict[str, int] | None = None,
+    market_median: MarketMedian | None = None,
+) -> str:
     if source_stats is None:
         source_stats = []
-
     if config is None:
         config = load_config()
 
-    signals = _telegram_signal_offers(offers, config)
+    buy_offers = _telegram_signal_offers(offers, market_median, config)
+    suspicious_offers = sorted(
+        [o for o in offers if get_market_tier(o, market_median, config) == "suspicious"],
+        key=lambda o: o.price,
+    )
+    at_market = [o for o in offers if get_market_tier(o, market_median, config) == "at_market"]
+    above_market = [o for o in offers if get_market_tier(o, market_median, config) == "above_market"]
+
+    median_str = f"{market_median.value:.0f} RUB" if market_median else "n/a"
     lines = [
         "📊 RTX 5070 Ti daily report",
         "",
-        "Signals:",
-        f"- total: {len(signals)}",
-        f"- thresholds: good <= {config['new_good_price']} RUB, urgent <= {config['new_urgent_buy']} RUB",
+        f"Медиана рынка: {median_str}",
+        f"- buy (≤{config['buy_pct']}%): {len(buy_offers)}",
+        f"- at_market (≤{config['at_market_pct']}%): {len(at_market)}",
+        f"- above_market: {len(above_market)}",
+        f"- suspicious (<{config['suspicious_pct']}%): {len(suspicious_offers)}",
+        "",
     ]
 
-    if signals:
-        lines.extend(["", "Best signals:"])
-        for idx, offer in enumerate(signals[:10], start=1):
-            lines.extend(
-                [
-                    f"{idx}. {get_signal_label(offer)} - {offer.price:.0f} RUB - {offer.source}",
-                    offer.title,
-                    offer.url,
-                    "",
-                ]
-            )
+    if buy_offers:
+        lines.append("Лучшие buy-офферы:")
+        for idx, offer in enumerate(buy_offers[:5], start=1):
+            lines.extend([
+                f"{idx}. {offer.price:.0f} RUB — {offer.source}",
+                offer.title,
+                offer.url,
+                "",
+            ])
     else:
-        lines.extend(["", "Best signals: n/a", ""])
+        lines.extend(["Buy-сигналов нет", ""])
+
+    if suspicious_offers:
+        lines.append("⚠️ Suspicious — проверить, возможен скам:")
+        for offer in suspicious_offers[:3]:
+            lines.extend([
+                f"{offer.price:.0f} RUB — {offer.source}",
+                offer.title,
+                offer.url,
+                "",
+            ])
 
     if offers:
-        best = offers[0]
-        lines.extend(
-            [
-                "Best overall price:",
-                f"{best.price:.0f} {best.currency} - {best.source}",
-                best.title,
-                best.url,
-                "",
-            ]
-        )
+        best = min(offers, key=lambda o: o.price)
+        best_tier = get_market_tier(best, market_median, config)
+        lines.extend([
+            "Лучшая цена:",
+            f"{best.price:.0f} {best.currency} [{best_tier}] — {best.source}",
+            best.title,
+            best.url,
+            "",
+        ])
     else:
-        lines.extend(["Best overall price: n/a", ""])
+        lines.extend(["Лучшая цена: n/a", ""])
 
     _append_source_summary(lines, source_stats, heading="Source health:")
     lines.append("")
-    lines.append(f"Total filtered offers: {len(offers)}")
+    lines.append(f"Всего офферов: {len(offers)}")
     return "\n".join(lines)[:4000]
 
 
@@ -601,6 +646,7 @@ def notify_telegram(
     source_stats: list[dict[str, Any]] | None = None,
     daily_report: bool = False,
     config: dict[str, int] | None = None,
+    market_median: MarketMedian | None = None,
 ) -> None:
     if source_stats is None:
         source_stats = []
@@ -619,9 +665,9 @@ def notify_telegram(
         import requests
 
         if daily_report:
-            text = build_telegram_daily_report_text(offers, source_stats, config)
+            text = build_telegram_daily_report_text(offers, source_stats, config, market_median)
         else:
-            text = build_telegram_signal_text(offers, source_stats, config)
+            text = build_telegram_signal_text(offers, source_stats, config, market_median)
             if not text:
                 return
 
@@ -732,7 +778,7 @@ def main() -> None:
         min_count=config["median_min_count"],
     )
     save_reports(filtered, source_stats, config, market_median)
-    notify_telegram(filtered, source_stats, daily_report=args.daily_report, config=config)
+    notify_telegram(filtered, source_stats, daily_report=args.daily_report, config=config, market_median=market_median)
 
     print("Source summary:")
     for stat in source_stats:
