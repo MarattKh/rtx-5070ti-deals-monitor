@@ -667,9 +667,47 @@ def test_notify_telegram_skips_without_env(monkeypatch):
 
     monkeypatch.delenv("TG_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TG_CHAT_ID", raising=False)
+    monkeypatch.delenv("AGENT_NOTIFY_TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("AGENT_NOTIFY_TELEGRAM_CHAT_ID", raising=False)
     monkeypatch.setattr(mon, "requests", DummyRequests, raising=False)
     mon.notify_telegram([mk_offer("RTX 5070 Ti", price=90000)])
     assert calls == []
+
+
+def test_notify_telegram_skips_warns_when_no_token(monkeypatch, caplog):
+    import logging
+    import monitor_5070_ti_v_2 as mon
+
+    monkeypatch.delenv("TG_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TG_CHAT_ID", raising=False)
+    monkeypatch.delenv("AGENT_NOTIFY_TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("AGENT_NOTIFY_TELEGRAM_CHAT_ID", raising=False)
+    with caplog.at_level(logging.WARNING, logger="telegram"):
+        mon.notify_telegram([mk_offer("RTX 5070 Ti", price=90000)])
+    assert any("AGENT_NOTIFY_TELEGRAM_BOT_TOKEN" in r.message for r in caplog.records)
+
+
+def test_notify_telegram_reads_agent_notify_env_vars(monkeypatch):
+    import sys
+    import types
+    import monitor_5070_ti_v_2 as mon
+
+    calls = []
+
+    def fake_post(url, data, timeout):
+        calls.append({"url": url, "data": data})
+
+    monkeypatch.delenv("TG_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TG_CHAT_ID", raising=False)
+    monkeypatch.setenv("AGENT_NOTIFY_TELEGRAM_BOT_TOKEN", "agent-token")
+    monkeypatch.setenv("AGENT_NOTIFY_TELEGRAM_CHAT_ID", "agent-chat")
+    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
+    mon.notify_telegram(
+        [mk_offer("RTX 5070 Ti", price=90000)],
+        daily_report=True,
+    )
+    assert len(calls) == 1
+    assert "agent-token" in calls[0]["url"]
 
 
 def test_notify_telegram_sends_good_and_urgent_only(monkeypatch):
