@@ -32,6 +32,7 @@ from parsers import (
     regard,
     citilink,
     wildberries,
+    xcom_shop,
     yandex_market,
 )
 
@@ -62,6 +63,7 @@ ENABLED_SOURCES: tuple[tuple[str, Any], ...] = (
     ("Ozon", ozon),
     ("Яндекс Маркет", yandex_market),
     ("Avito", avito),
+    ("XCOM-SHOP", xcom_shop),
 )
 
 STATUS_AWARE_SOURCE_NAMES = {"DNS", "Ситилинк", "Ozon"}
