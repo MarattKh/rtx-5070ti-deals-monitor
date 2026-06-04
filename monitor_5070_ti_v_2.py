@@ -607,9 +607,12 @@ def notify_telegram(
     if config is None:
         config = load_config()
 
-    token = os.getenv("TG_BOT_TOKEN")
-    chat_id = os.getenv("TG_CHAT_ID")
+    token = os.getenv("AGENT_NOTIFY_TELEGRAM_BOT_TOKEN") or os.getenv("TG_BOT_TOKEN")
+    chat_id = os.getenv("AGENT_NOTIFY_TELEGRAM_CHAT_ID") or os.getenv("TG_CHAT_ID")
     if not token or not chat_id:
+        logging.getLogger("telegram").warning(
+            "Telegram skipped: AGENT_NOTIFY_TELEGRAM_BOT_TOKEN / AGENT_NOTIFY_TELEGRAM_CHAT_ID not set"
+        )
         return
 
     try:
