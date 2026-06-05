@@ -32,6 +32,7 @@ from parsers import (
     mvideo,
     megamarket,
     ozon,
+    positronica,
     regard,
     citilink,
     wildberries,
@@ -69,6 +70,7 @@ ENABLED_SOURCES: tuple[tuple[str, Any], ...] = (
     ("XCOM-SHOP", xcom_shop),
     ("Ф-Центр", fcenter),
     ("KNS", kns),
+    ("Позитроника", positronica),
 )
 
 STATUS_AWARE_SOURCE_NAMES = {"DNS", "Ситилинк", "Ozon"}
@@ -116,10 +118,28 @@ def normalize_title(text: str) -> str:
     return " ".join(text.lower().replace("-", " ").split())
 
 
+# OEM part-code prefixes that unambiguously identify RTX 5070 Ti.
+# Checked against the compact (no-space) form of a normalized title.
+#
+#   Gigabyte GV-N507T…  →  compact contains "n507t"
+#     N=NVIDIA, 507=5070, T=Ti suffix — non-Ti variant uses "n5070" (with a 0),
+#     so "n507t" is exclusive to the Ti.
+#
+# Extend this tuple only when a new code is observed in real rejected offers.
+_PART_CODES_5070_TI: tuple[str, ...] = ("n507t",)
+
+
+def _has_5070_ti_signal(haystack: str, compact: str) -> bool:
+    """True if haystack/compact unambiguously describes an RTX 5070 Ti GPU."""
+    if "5070ti" in compact or ("5070" in haystack and "ti" in haystack):
+        return True
+    return any(code in compact for code in _PART_CODES_5070_TI)
+
+
 def is_rtx_5070_ti(title: str, raw_text: str) -> bool:
     haystack = normalize_title(f"{title} {raw_text}")
     compact = haystack.replace(" ", "")
-    return "5070ti" in compact or ("5070" in haystack and "ti" in haystack)
+    return _has_5070_ti_signal(haystack, compact)
 
 
 _ACCESSORY_RE = re.compile(
@@ -137,7 +157,7 @@ def is_accessory_or_invalid(title: str, raw_text: str) -> bool:
     haystack = normalize_title(f"{title} {raw_text}")
     compact = haystack.replace(" ", "")
 
-    if "5070 ti" not in haystack and "5070ti" not in compact:
+    if not _has_5070_ti_signal(haystack, compact):
         return True
 
     return bool(_ACCESSORY_RE.search(haystack))
@@ -182,7 +202,7 @@ def filter_offers(offers: Iterable[ProductOffer], config: dict[str, int] | None 
         if is_accessory_or_invalid(item.title, item.raw_text):
             continue
         norm = normalize_title(item.title + " " + item.raw_text)
-        if "5070 ti" not in norm and "5070ti" not in norm.replace(" ", ""):
+        if not _has_5070_ti_signal(norm, norm.replace(" ", "")):
             continue
         out.append(item)
     out.sort(key=lambda x: x.price)
