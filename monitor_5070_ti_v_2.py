@@ -32,6 +32,7 @@ from parsers import (
     mvideo,
     megamarket,
     ozon,
+    positronica,
     regard,
     citilink,
     wildberries,
@@ -69,6 +70,7 @@ ENABLED_SOURCES: tuple[tuple[str, Any], ...] = (
     ("XCOM-SHOP", xcom_shop),
     ("Ф-Центр", fcenter),
     ("KNS", kns),
+    ("Позитроника", positronica),
 )
 
 STATUS_AWARE_SOURCE_NAMES = {"DNS", "Ситилинк", "Ozon"}
