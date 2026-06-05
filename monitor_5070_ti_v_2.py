@@ -32,6 +32,7 @@ from parsers import (
     mvideo,
     megamarket,
     ozon,
+    nix,
     positronica,
     regard,
     citilink,
@@ -71,6 +72,7 @@ ENABLED_SOURCES: tuple[tuple[str, Any], ...] = (
     ("Ф-Центр", fcenter),
     ("KNS", kns),
     ("Позитроника", positronica),
+    ("НИКС", nix),
 )
 
 STATUS_AWARE_SOURCE_NAMES = {"DNS", "Ситилинк", "Ozon"}
@@ -125,8 +127,12 @@ def normalize_title(text: str) -> str:
 #     N=NVIDIA, 507=5070, T=Ti suffix — non-Ti variant uses "n5070" (with a 0),
 #     so "n507t" is exclusive to the Ti.
 #
+#   Palit NE7507T…  →  compact contains "ne7507t"
+#     NE=Nvidia/Palit, 7507=5070 (reversed tens), T=Ti — non-Ti would use
+#     "ne75070" or similar without immediate T after 7507, so "ne7507t" is Ti-only.
+#
 # Extend this tuple only when a new code is observed in real rejected offers.
-_PART_CODES_5070_TI: tuple[str, ...] = ("n507t",)
+_PART_CODES_5070_TI: tuple[str, ...] = ("n507t", "ne7507t")
 
 
 def _has_5070_ti_signal(haystack: str, compact: str) -> bool:
