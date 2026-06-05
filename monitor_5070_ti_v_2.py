@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -693,6 +694,10 @@ def build_telegram_daily_report_text(
     return "\n".join(lines)[:4000]
 
 
+_TELEGRAM_MAX_ATTEMPTS = 3
+_TELEGRAM_RETRY_DELAY = 4  # seconds between retries
+
+
 def notify_telegram(
     offers: list[ProductOffer],
     source_stats: list[dict[str, Any]] | None = None,
@@ -705,31 +710,60 @@ def notify_telegram(
     if config is None:
         config = load_config()
 
+    tg_log = logging.getLogger("telegram")
+
     token = os.getenv("AGENT_NOTIFY_TELEGRAM_BOT_TOKEN") or os.getenv("TG_BOT_TOKEN")
     chat_id = os.getenv("AGENT_NOTIFY_TELEGRAM_CHAT_ID") or os.getenv("TG_CHAT_ID")
+
+    print(
+        f"[telegram] token={'есть' if token else 'нет'}, "
+        f"chat_id={'есть' if chat_id else 'нет'}",
+        flush=True,
+    )
+
     if not token or not chat_id:
-        logging.getLogger("telegram").warning(
+        tg_log.warning(
             "Telegram skipped: AGENT_NOTIFY_TELEGRAM_BOT_TOKEN / AGENT_NOTIFY_TELEGRAM_CHAT_ID not set"
         )
         return
 
     try:
         import requests
+    except ImportError as exc:
+        msg = f"requests not installed: {exc}"
+        print(f"[telegram] Telegram НЕ доставлен: {msg}", flush=True)
+        tg_log.error("Telegram НЕ доставлен: %s", msg)
+        return
 
-        if daily_report:
-            text = build_telegram_daily_report_text(offers, source_stats, config, market_median)
-        else:
-            text = build_telegram_signal_text(offers, source_stats, config, market_median)
-            if not text:
-                return
+    if daily_report:
+        text = build_telegram_daily_report_text(offers, source_stats, config, market_median)
+    else:
+        text = build_telegram_signal_text(offers, source_stats, config, market_median)
+        if not text:
+            return
 
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data={"chat_id": chat_id, "text": text[:4000]},
-            timeout=15,
-        )
-    except Exception as exc:
-        logging.getLogger("telegram").exception("telegram error: %s", exc)
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    last_exc: Exception | None = None
+
+    for attempt in range(1, _TELEGRAM_MAX_ATTEMPTS + 1):
+        print(f"[telegram] попытка {attempt}/{_TELEGRAM_MAX_ATTEMPTS}…", flush=True)
+        try:
+            requests.post(url, data={"chat_id": chat_id, "text": text[:4000]}, timeout=15)
+            print("[telegram] Telegram отправлен", flush=True)
+            tg_log.info("Telegram отправлен (попытка %d)", attempt)
+            return
+        except Exception as exc:
+            last_exc = exc
+            tg_log.warning("telegram attempt %d/%d failed: %s", attempt, _TELEGRAM_MAX_ATTEMPTS, exc)
+            if attempt < _TELEGRAM_MAX_ATTEMPTS:
+                time.sleep(_TELEGRAM_RETRY_DELAY)
+
+    reason = str(last_exc)
+    print(
+        f"[telegram] Telegram НЕ доставлен после {_TELEGRAM_MAX_ATTEMPTS} попыток: {reason}",
+        flush=True,
+    )
+    tg_log.error("Telegram НЕ доставлен после %d попыток: %s", _TELEGRAM_MAX_ATTEMPTS, reason)
 
 
 def run_source(name: str, fn) -> tuple[list[ProductOffer], str]:

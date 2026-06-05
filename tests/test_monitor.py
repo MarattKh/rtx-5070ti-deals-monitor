@@ -1689,3 +1689,84 @@ def test_results_md_groups_offers_by_tier(tmp_path, monkeypatch):
     buy_pos = content.index("## Buy")
     above_pos = content.index("## Above market")
     assert buy_pos < above_pos  # buy section comes first
+
+
+# --- notify_telegram retry & logging tests ---
+
+def test_notify_telegram_retries_on_failure_then_succeeds(monkeypatch):
+    import sys
+    import types
+    import monitor_5070_ti_v_2 as mon
+
+    calls = []
+    attempt = {"n": 0}
+
+    def flaky_post(url, data, timeout):
+        attempt["n"] += 1
+        if attempt["n"] < 3:
+            raise ConnectionError("simulated network error")
+        calls.append({"url": url, "data": data})
+
+    sleeps = []
+    monkeypatch.setattr(mon.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setenv("TG_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TG_CHAT_ID", "chat")
+    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=flaky_post))
+
+    mon.notify_telegram([mk_offer("RTX 5070 Ti", price=90000)], daily_report=True)
+
+    assert len(calls) == 1, "should succeed on 3rd attempt"
+    assert len(sleeps) == 2, "should sleep between retries"
+
+
+def test_notify_telegram_logs_failure_after_all_retries(monkeypatch, capsys):
+    import sys
+    import types
+    import monitor_5070_ti_v_2 as mon
+
+    def always_fail(url, data, timeout):
+        raise ConnectionError("always down")
+
+    monkeypatch.setattr(mon.time, "sleep", lambda s: None)
+    monkeypatch.setenv("TG_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TG_CHAT_ID", "chat")
+    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=always_fail))
+
+    mon.notify_telegram([mk_offer("RTX 5070 Ti", price=90000)], daily_report=True)
+
+    out = capsys.readouterr().out
+    assert "НЕ доставлен" in out
+    assert "3" in out  # mentions attempt count
+
+
+def test_notify_telegram_prints_token_and_chat_status(monkeypatch, capsys):
+    import monitor_5070_ti_v_2 as mon
+
+    monkeypatch.delenv("TG_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TG_CHAT_ID", raising=False)
+    monkeypatch.delenv("AGENT_NOTIFY_TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("AGENT_NOTIFY_TELEGRAM_CHAT_ID", raising=False)
+
+    mon.notify_telegram([mk_offer("RTX 5070 Ti", price=90000)])
+
+    out = capsys.readouterr().out
+    assert "token=" in out
+    assert "нет" in out
+
+
+def test_notify_telegram_prints_sent_on_success(monkeypatch, capsys):
+    import sys
+    import types
+    import monitor_5070_ti_v_2 as mon
+
+    def ok_post(url, data, timeout):
+        pass
+
+    monkeypatch.setenv("TG_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TG_CHAT_ID", "chat")
+    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=ok_post))
+
+    mon.notify_telegram([mk_offer("RTX 5070 Ti", price=90000)], daily_report=True)
+
+    out = capsys.readouterr().out
+    assert "отправлен" in out

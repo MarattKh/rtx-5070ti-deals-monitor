@@ -51,7 +51,7 @@ def install_playwright_if_missing() -> bool:
 
 def fetch_html(
     url: str,
-    timeout_ms: int = 30000,
+    timeout_ms: int = 60000,
     save_to: str | None = None,
     wait_selectors: list[str] | None = None,
     extra_delay_ms: int = 0,

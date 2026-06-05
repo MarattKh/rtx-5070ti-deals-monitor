@@ -7,7 +7,8 @@ echo RTX 5070 Ti Monitor - daily Telegram report
 echo ========================================
 echo.
 
-python monitor_5070_ti_v_2.py --browser --daily-report
+python monitor_5070_ti_v_2.py --browser --daily-report > monitor-last.log 2>&1
+type monitor-last.log
 
 echo.
 echo ========================================
