@@ -26,6 +26,7 @@ from parsers import (
     cdek_shopping,
     dns,
     eldorado,
+    fcenter,
     mvideo,
     megamarket,
     ozon,
@@ -64,6 +65,7 @@ ENABLED_SOURCES: tuple[tuple[str, Any], ...] = (
     ("Яндекс Маркет", yandex_market),
     ("Avito", avito),
     ("XCOM-SHOP", xcom_shop),
+    ("Ф-Центр", fcenter),
 )
 
 STATUS_AWARE_SOURCE_NAMES = {"DNS", "Ситилинк", "Ozon"}
