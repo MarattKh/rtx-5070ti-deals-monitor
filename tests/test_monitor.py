@@ -6,12 +6,11 @@ import pytest
 from monitor_5070_ti_v_2 import filter_offers, get_signal_label
 from models import ProductOffer
 from parsers.citilink import parse_cards as parse_citilink_cards
-from parsers.dns import parse_cards as parse_dns_cards
 from parsers.regard import parse_cards as parse_regard_cards
 from parsers.yandex_market import parse_cards as parse_yandex_cards
 
 
-def mk_offer(title: str, raw: str = "", price: float = 100000, url: str = "https://example.com/product/1", source: str = "DNS") -> ProductOffer:
+def mk_offer(title: str, raw: str = "", price: float = 100000, url: str = "https://example.com/product/1", source: str = "Ситилинк") -> ProductOffer:
     return ProductOffer(source, title, price, "RUB", url, "new", source, "in_stock", "2026-01-01T00:00:00+00:00", 0.9, raw)
 
 
@@ -150,7 +149,7 @@ def test_append_price_history_writes_jsonl_records(tmp_path):
     record = json.loads(lines[0])
     assert record == {
         "timestamp": timestamp,
-        "source": "DNS",
+        "source": "Ситилинк",
         "title": "RTX 5070 Ti Ventus",
         "price": 89000,
         "currency": "RUB",
@@ -196,7 +195,7 @@ def test_source_summary_counts_and_errors():
     ok_offer = mk_offer("RTX 5070 Ti", url="https://shop.example/product/5070ti")
 
     offers, err = mon.run_source(
-        "DNS",
+        "Ситилинк",
         lambda: [
             ok_offer,
             mk_offer("RTX 5070", url="https://shop.example/product/5070"),
@@ -207,7 +206,7 @@ def test_source_summary_counts_and_errors():
     assert len(mon.filter_offers(offers)) == 1
 
     offers_bad, err_bad = mon.run_source(
-        "DNS",
+        "Ситилинк",
         lambda: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     assert offers_bad == []
@@ -220,14 +219,14 @@ def test_results_md_contains_summary_and_source_summary(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     mon.save_reports(
         [mk_offer("RTX 5070 Ti Ventus", price=89000)],
-        [{"source": "DNS", "raw_count": 3, "filtered_count": 1, "error": ""}],
+        [{"source": "Ситилинк", "raw_count": 3, "filtered_count": 1, "error": ""}],
     )
 
     content = Path("results.md").read_text(encoding="utf-8")
     assert "## Summary" in content
     assert "## Source summary" in content
     assert "| Source | Classification | Raw offers | Filtered offers | Reason | Warnings |" in content
-    assert "| DNS | ok | 3 | 1 | ok | none |" in content
+    assert "| Ситилинк | ok | 3 | 1 | ok | none |" in content
 
 
 @pytest.mark.parametrize("reason", ["401 unauthorized", "403 forbidden", "429 too many requests"])
@@ -263,16 +262,16 @@ def test_source_summary_formats_no_filtered_warning_row():
     import monitor_5070_ti_v_2 as mon
 
     stat = {
-        "source": "DNS",
+        "source": "Ситилинк",
         "raw_count": 0,
         "filtered_count": 0,
         "error": "",
         "blocked": False,
-        "warnings": ["DNS browser HTML contains no parsed product cards."],
+        "warnings": ["Citilink browser HTML contains no parsed product cards."],
     }
 
-    assert mon._format_source_summary_text(stat) == "DNS: no_filtered_offers; raw 0; filtered 0; reason: no offers after parsing; warnings: DNS browser HTML contains no parsed product cards."
-    assert mon._format_source_summary_markdown_row(stat) == "| DNS | no_filtered_offers | 0 | 0 | no offers after parsing | DNS browser HTML contains no parsed product cards. |"
+    assert mon._format_source_summary_text(stat) == "Ситилинк: no_filtered_offers; raw 0; filtered 0; reason: no offers after parsing; warnings: Citilink browser HTML contains no parsed product cards."
+    assert mon._format_source_summary_markdown_row(stat) == "| Ситилинк | no_filtered_offers | 0 | 0 | no offers after parsing | Citilink browser HTML contains no parsed product cards. |"
 
 
 def test_summarize_source_stats_classifies_all_review_states():
@@ -309,7 +308,7 @@ def test_summarize_source_stats_classifies_all_review_states():
     ]
 
 
-def test_results_md_source_summary_shows_blocked_dns(tmp_path, monkeypatch):
+def test_results_md_source_summary_shows_blocked_nix(tmp_path, monkeypatch):
     import monitor_5070_ti_v_2 as mon
 
     monkeypatch.chdir(tmp_path)
@@ -317,20 +316,20 @@ def test_results_md_source_summary_shows_blocked_dns(tmp_path, monkeypatch):
         [],
         [
             {
-                "source": "DNS",
+                "source": "НИКС",
                 "raw_count": 0,
                 "filtered_count": 0,
                 "error": "",
                 "blocked": True,
                 "block_reason": "403 forbidden",
-                "warnings": ["DNS access forbidden. Manual verification required."],
+                "warnings": ["НИКС access blocked. Manual verification required."],
             }
         ],
     )
 
     content = Path("results.md").read_text(encoding="utf-8")
-    assert "| DNS | unavailable | 0 | 0 | blocked: 403 forbidden | DNS access forbidden. Manual verification required. |" in content
-    assert "| DNS | 0 | 0 |" not in content
+    assert "| НИКС | unavailable | 0 | 0 | blocked: 403 forbidden | НИКС access blocked. Manual verification required. |" in content
+    assert "| НИКС | 0 | 0 |" not in content
 
 
 def test_results_md_source_summary_shows_blocked_citilink(tmp_path, monkeypatch):
@@ -405,91 +404,6 @@ def test_title_is_not_artificial():
     filtered = filter_offers(offers)
     assert filtered and filtered[0].title != "RTX 5070 Ti"
 
-
-def test_dns_fixture_card_parsing_and_filtering():
-    html = Path("tests/fixtures/dns_search.html").read_text(encoding="utf-8")
-    cards = parse_dns_cards(html)
-    offers = [mk_offer(c["title"], price=c["price"], url=f"https://www.dns-shop.ru{c['url']}") for c in cards]
-    filtered = filter_offers(offers)
-    assert filtered
-    assert "Palit" in filtered[0].title
-    assert "/search" not in filtered[0].url and "?q=" not in filtered[0].url and "?text=" not in filtered[0].url
-    assert filtered[0].price == 89999
-    assert all("РІРѕРґРѕР±Р»РѕРє" not in x.title.lower() for x in filtered)
-    assert all(" 5070" not in x.title.lower() or "ti" in x.title.lower() for x in filtered)
-
-
-def test_dns_detects_blocked_html():
-    from parsers import dns
-
-    html = "<html><head><title>403 Forbidden</title></head><body>Доступ к сайту запрещен</body></html>"
-
-    assert dns.detect_block_reason(html) == "403 forbidden"
-    assert dns.detect_block_reason("<html><body>Доступ к сайту запрещен</body></html>") == "403 forbidden"
-    assert dns.detect_block_reason("<html><body>catalog products</body></html>") is None
-
-
-def test_dns_parse_offers_with_status_returns_blocked_status(monkeypatch):
-    from parsers import dns
-
-    html = "<html><head><title>403 Forbidden</title></head><body>Доступ к сайту запрещен</body></html>"
-    monkeypatch.setattr(dns, "_download", lambda url: html)
-
-    result = dns.parse_offers_with_status()
-
-    assert result == {
-        "offers": [],
-        "blocked": True,
-        "block_reason": "403 forbidden",
-        "warnings": ["DNS access forbidden. Manual verification required."],
-        "errors": 1,
-    }
-    assert dns.parse_offers() == []
-
-
-def test_dns_parse_offers_with_status_treats_401_as_blocked(monkeypatch):
-    from urllib.error import HTTPError
-
-    from parsers import dns
-
-    def raise_401(url):
-        raise HTTPError(url, 401, "Unauthorized", hdrs=None, fp=None)
-
-    monkeypatch.setattr(dns, "_download", raise_401)
-
-    result = dns.parse_offers_with_status()
-
-    assert result["blocked"] is True
-    assert result["block_reason"] == "401 unauthorized"
-    assert result["warnings"] == ["DNS access forbidden. Manual verification required."]
-    assert result["errors"] == 1
-    assert result["offers"] == []
-
-
-@pytest.mark.parametrize(
-    ("status_code", "reason"),
-    [
-        (401, "401 unauthorized"),
-        (403, "403 forbidden"),
-    ],
-)
-def test_dns_http_blocked_statuses_are_not_empty_successes(monkeypatch, status_code, reason):
-    from parsers import dns
-
-    def raise_http_error(url):
-        raise HTTPError(url, status_code, reason, hdrs=None, fp=None)
-
-    monkeypatch.setattr(dns, "_download", raise_http_error)
-
-    result = dns.parse_offers_with_status()
-
-    assert result == {
-        "offers": [],
-        "blocked": True,
-        "block_reason": reason,
-        "warnings": ["DNS access forbidden. Manual verification required."],
-        "errors": 1,
-    }
 
 def test_regard_fixture_card_parsing_and_filtering():
     html = Path("tests/fixtures/regard_search.html").read_text(encoding="utf-8")
@@ -624,7 +538,7 @@ def test_results_md_contains_tier_sections_and_summary(tmp_path, monkeypatch):
             mk_offer("RTX 5070 Ti Mid", price=95_000),
             mk_offer("RTX 5070 Ti Expensive", price=120_000),
         ],
-        [{"source": "DNS", "raw_count": 3, "filtered_count": 3, "error": ""}],
+        [{"source": "Ситилинк", "raw_count": 3, "filtered_count": 3, "error": ""}],
         market_median=market_median,
     )
 
@@ -842,24 +756,24 @@ def test_notify_telegram_includes_source_summary(monkeypatch):
     mon.notify_telegram(
         [mk_offer("RTX 5070 Ti good", price=90000)],
         [
-            {"source": "DNS", "raw_count": 10, "filtered_count": 2, "error": ""},
-            {"source": "Ситилинк", "raw_count": 8, "filtered_count": 1, "error": ""},
-            {"source": "Регард", "raw_count": 7, "filtered_count": 1, "error": ""},
+            {"source": "Ситилинк", "raw_count": 10, "filtered_count": 2, "error": ""},
+            {"source": "Регард", "raw_count": 8, "filtered_count": 1, "error": ""},
+            {"source": "KNS", "raw_count": 7, "filtered_count": 1, "error": ""},
         ],
         market_median=median,
     )
 
     text = payload["text"]
     assert "Рабочие:" in text
-    assert "DNS (2)" in text
-    assert "Ситилинк (1)" in text
+    assert "Ситилинк (2)" in text
     assert "Регард (1)" in text
+    assert "KNS (1)" in text
     assert "raw" not in text
     assert "filtered" not in text
     assert "reason" not in text
 
 
-def test_notify_telegram_source_summary_shows_blocked_dns(monkeypatch):
+def test_notify_telegram_source_summary_shows_blocked_nix(monkeypatch):
     import sys
     import types
     import monitor_5070_ti_v_2 as mon
@@ -879,13 +793,13 @@ def test_notify_telegram_source_summary_shows_blocked_dns(monkeypatch):
         [mk_offer("RTX 5070 Ti good", price=90000)],
         [
             {
-                "source": "DNS",
+                "source": "НИКС",
                 "raw_count": 0,
                 "filtered_count": 0,
                 "error": "",
                 "blocked": True,
                 "block_reason": "403 forbidden",
-                "warnings": ["DNS access forbidden. Manual verification required."],
+                "warnings": ["НИКС access blocked. Manual verification required."],
             },
             {"source": "Ситилинк", "raw_count": 8, "filtered_count": 1, "error": ""},
         ],
@@ -894,7 +808,7 @@ def test_notify_telegram_source_summary_shows_blocked_dns(monkeypatch):
 
     text = payload["text"]
     assert "Заблокировано" in text
-    assert "DNS" in text
+    assert "НИКС" in text
     assert "403" in text
     assert "Рабочие:" in text
     assert "Ситилинк (1)" in text
@@ -961,13 +875,13 @@ def test_source_health_ru_silent_group():
     import monitor_5070_ti_v_2 as mon
 
     lines = mon._build_source_health_ru([
-        {"source": "М.Видео", "raw_count": 0, "filtered_count": 0, "error": ""},
-        {"source": "Ozon", "raw_count": 0, "filtered_count": 0, "error": ""},
+        {"source": "СДЭК Shopping", "raw_count": 0, "filtered_count": 0, "error": ""},
+        {"source": "KNS", "raw_count": 0, "filtered_count": 0, "error": ""},
     ])
     text = "\n".join(lines)
     assert "Молчат:" in text
-    assert "М.Видео" in text
-    assert "Ozon" in text
+    assert "СДЭК Shopping" in text
+    assert "KNS" in text
     assert "Рабочие" not in text
     assert "raw" not in text
     assert "no offers" not in text
@@ -978,18 +892,18 @@ def test_source_health_ru_blocked_group():
 
     lines = mon._build_source_health_ru([
         {
-            "source": "DNS",
+            "source": "НИКС",
             "raw_count": 0,
             "filtered_count": 0,
             "error": "",
             "blocked": True,
             "block_reason": "403 forbidden",
-            "warnings": ["DNS access forbidden. Manual verification required."],
+            "warnings": ["НИКС access blocked. Manual verification required."],
         },
     ])
     text = "\n".join(lines)
     assert "Заблокировано" in text
-    assert "DNS" in text
+    assert "НИКС" in text
     assert "403" in text
     assert "blocked:" not in text
     assert "warnings" not in text
@@ -1015,12 +929,12 @@ def test_source_health_ru_no_english_labels_in_daily_report(monkeypatch):
         [mk_offer("RTX 5070 Ti", price=90000)],
         [
             {"source": "Ситилинк", "raw_count": 5, "filtered_count": 5, "error": ""},
-            {"source": "Wildberries", "raw_count": 0, "filtered_count": 0, "error": ""},
+            {"source": "СДЭК Shopping", "raw_count": 0, "filtered_count": 0, "error": ""},
             {
-                "source": "DNS",
+                "source": "НИКС",
                 "raw_count": 0, "filtered_count": 0, "error": "",
                 "blocked": True, "block_reason": "403 forbidden",
-                "warnings": ["DNS access forbidden."],
+                "warnings": ["НИКС access blocked."],
             },
         ],
         daily_report=True,
@@ -1114,11 +1028,9 @@ def test_daily_report_cli_flag_passed_to_notify(monkeypatch):
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
     monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None, market_median=None: None)
     monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None, market_median=None: captured.update({"daily_report": daily_report}))
-    monkeypatch.setattr(mon.dns, "parse_offers", lambda browser_mode=False: [])
-    monkeypatch.setattr(mon.dns, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
     monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
     monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
-    set_enabled_sources(monkeypatch, mon, (("DNS", mon.dns), ("Ситилинк", mon.citilink), ("Регард", mon.regard)))
+    set_enabled_sources(monkeypatch, mon, (("Ситилинк", mon.citilink), ("Регард", mon.regard)))
     monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py", "--browser", "--daily-report"])
 
     mon.main()
@@ -1126,37 +1038,36 @@ def test_daily_report_cli_flag_passed_to_notify(monkeypatch):
     assert captured["daily_report"] is True
 
 
-def test_main_retries_blocked_dns_with_browser_fallback_success(monkeypatch):
+def test_main_retries_blocked_citilink_with_browser_fallback_success(monkeypatch):
     import monitor_5070_ti_v_2 as mon
 
     calls = []
     captured = {}
     fallback_offer = mk_offer("RTX 5070 Ti browser offer", price=90000)
 
-    def fake_dns(browser_mode=False):
+    def fake_citilink(browser_mode=False):
         calls.append(browser_mode)
         if browser_mode:
             return {"offers": [fallback_offer], "blocked": False, "block_reason": None, "warnings": ["browser ok"], "errors": 0}
-        return {"offers": [], "blocked": True, "block_reason": "401 unauthorized", "warnings": ["DNS blocked"], "errors": 0}
+        return {"offers": [], "blocked": True, "block_reason": "401 unauthorized", "warnings": ["Citilink blocked"], "errors": 0}
 
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
     monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None, market_median=None: captured.update({"offers": offers, "source_stats": source_stats}))
     monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None, market_median=None: None)
-    monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
-    monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
+    monkeypatch.setattr(mon.citilink, "parse_offers_with_status", fake_citilink)
     monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
-    set_enabled_sources(monkeypatch, mon, (("DNS", mon.dns), ("Ситилинк", mon.citilink), ("Регард", mon.regard)))
+    set_enabled_sources(monkeypatch, mon, (("Ситилинк", mon.citilink), ("Регард", mon.regard)))
     monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py"])
 
     mon.main()
 
-    dns_stat = captured["source_stats"][0]
+    citilink_stat = captured["source_stats"][0]
     assert calls == [False, True]
     assert captured["offers"] == [fallback_offer]
-    assert dns_stat["raw_count"] == 1
-    assert dns_stat["blocked"] is False
-    assert dns_stat["block_reason"] is None
-    assert dns_stat["warnings"] == ["browser ok"]
+    assert citilink_stat["raw_count"] == 1
+    assert citilink_stat["blocked"] is False
+    assert citilink_stat["block_reason"] is None
+    assert citilink_stat["warnings"] == ["browser ok"]
 
 
 def test_main_preserves_original_block_when_browser_fallback_has_no_offers(monkeypatch):
@@ -1165,30 +1076,29 @@ def test_main_preserves_original_block_when_browser_fallback_has_no_offers(monke
     calls = []
     captured = {}
 
-    def fake_dns(browser_mode=False):
+    def fake_citilink(browser_mode=False):
         calls.append(browser_mode)
         if browser_mode:
             return {"offers": [], "blocked": False, "block_reason": None, "warnings": ["browser empty"], "errors": 0}
-        return {"offers": [], "blocked": True, "block_reason": "401 unauthorized", "warnings": ["DNS blocked"], "errors": 0}
+        return {"offers": [], "blocked": True, "block_reason": "401 unauthorized", "warnings": ["Citilink blocked"], "errors": 0}
 
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
     monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None, market_median=None: captured.update({"offers": offers, "source_stats": source_stats}))
     monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None, market_median=None: None)
-    monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
-    monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
+    monkeypatch.setattr(mon.citilink, "parse_offers_with_status", fake_citilink)
     monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
-    set_enabled_sources(monkeypatch, mon, (("DNS", mon.dns), ("Ситилинк", mon.citilink), ("Регард", mon.regard)))
+    set_enabled_sources(monkeypatch, mon, (("Ситилинк", mon.citilink), ("Регард", mon.regard)))
     monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py"])
 
     mon.main()
 
-    dns_stat = captured["source_stats"][0]
+    citilink_stat = captured["source_stats"][0]
     assert calls == [False, True]
     assert captured["offers"] == []
-    assert dns_stat["raw_count"] == 0
-    assert dns_stat["blocked"] is True
-    assert dns_stat["block_reason"] == "401 unauthorized"
-    assert dns_stat["warnings"] == ["DNS blocked", mon.BROWSER_FALLBACK_NO_OFFERS_WARNING, "browser empty"]
+    assert citilink_stat["raw_count"] == 0
+    assert citilink_stat["blocked"] is True
+    assert citilink_stat["block_reason"] == "401 unauthorized"
+    assert citilink_stat["warnings"] == ["Citilink blocked", mon.BROWSER_FALLBACK_NO_OFFERS_WARNING, "browser empty"]
 
 
 def test_main_does_not_retry_when_browser_mode_was_requested(monkeypatch):
@@ -1197,25 +1107,24 @@ def test_main_does_not_retry_when_browser_mode_was_requested(monkeypatch):
     calls = []
     captured = {}
 
-    def fake_dns(browser_mode=False):
+    def fake_citilink(browser_mode=False):
         calls.append(browser_mode)
         return {"offers": [], "blocked": True, "block_reason": "browser blocked", "warnings": ["still blocked"], "errors": 0}
 
     monkeypatch.setattr(mon, "configure_logging", lambda: None)
     monkeypatch.setattr(mon, "save_reports", lambda offers, source_stats=None, config=None, market_median=None: captured.update({"source_stats": source_stats}))
     monkeypatch.setattr(mon, "notify_telegram", lambda offers, source_stats=None, daily_report=False, config=None, market_median=None: None)
-    monkeypatch.setattr(mon.dns, "parse_offers_with_status", fake_dns)
-    monkeypatch.setattr(mon.citilink, "parse_offers_with_status", lambda browser_mode=False: {"offers": [], "blocked": False, "block_reason": None, "warnings": [], "errors": 0})
+    monkeypatch.setattr(mon.citilink, "parse_offers_with_status", fake_citilink)
     monkeypatch.setattr(mon.regard, "parse_offers", lambda: [])
-    set_enabled_sources(monkeypatch, mon, (("DNS", mon.dns), ("Ситилинк", mon.citilink), ("Регард", mon.regard)))
+    set_enabled_sources(monkeypatch, mon, (("Ситилинк", mon.citilink), ("Регард", mon.regard)))
     monkeypatch.setattr("sys.argv", ["monitor_5070_ti_v_2.py", "--browser"])
 
     mon.main()
 
-    dns_stat = captured["source_stats"][0]
+    citilink_stat = captured["source_stats"][0]
     assert calls == [True]
-    assert dns_stat["blocked"] is True
-    assert dns_stat["warnings"] == ["still blocked"]
+    assert citilink_stat["blocked"] is True
+    assert citilink_stat["warnings"] == ["still blocked"]
 
 
 def test_browser_fallback_exception_is_kept_as_warning(monkeypatch):
@@ -1245,26 +1154,25 @@ def test_enabled_sources_include_existing_retailer_modules():
 
     sources = dict(mon.ENABLED_SOURCES)
 
-    assert sources["DNS"] is mon.dns
     assert sources["Ситилинк"] is mon.citilink
     assert sources["Регард"] is mon.regard
-    assert sources["М.Видео"] is mon.mvideo
-    assert sources["Эльдорадо"] is mon.eldorado
-    assert sources["Wildberries"] is mon.wildberries
-    assert sources["Мегамаркет"] is mon.megamarket
-    assert sources["AliExpress"] is mon.aliexpress
-    assert "ComputerUniverse" not in sources
     assert sources["СДЭК Shopping"] is mon.cdek_shopping
-    assert sources["Ozon"] is mon.ozon
     assert sources["Яндекс Маркет"] is mon.yandex_market
-    assert sources["Avito"] is mon.avito
+    assert sources["XCOM-SHOP"] is mon.xcom_shop
+    assert sources["Ф-Центр"] is mon.fcenter
+    assert sources["KNS"] is mon.kns
+    assert sources["Позитроника"] is mon.positronica
+    assert sources["НИКС"] is mon.nix
+    assert len(sources) == 9
 
 
-def test_ozon_is_status_aware_and_has_parse_offers_with_status():
+def test_status_aware_sources_all_have_parse_offers_with_status():
     import monitor_5070_ti_v_2 as mon
 
-    assert "Ozon" in mon.STATUS_AWARE_SOURCE_NAMES
-    assert hasattr(mon.ozon, "parse_offers_with_status")
+    source_map = dict(mon.ENABLED_SOURCES)
+    for name in mon.STATUS_AWARE_SOURCE_NAMES:
+        assert name in source_map, f"{name} in STATUS_AWARE but not in ENABLED_SOURCES"
+        assert hasattr(source_map[name], "parse_offers_with_status"), f"{name} missing parse_offers_with_status"
 
 
 def test_main_attempts_multiple_existing_sources_and_isolates_failures(monkeypatch):
@@ -1394,93 +1302,6 @@ def test_daily_report_telegram_shows_median_tier_counts(monkeypatch):
 
     assert "- buy (≤85%)" in payload["text"]
     assert "Медиана рынка:" in payload["text"]
-
-
-def test_dns_detects_http_403_browser_html():
-    from parsers import dns
-
-    html = """
-    <html>
-      <head><title>HTTP 403</title></head>
-      <body>
-        <div class="title">403 Error</div>
-        <div class="sub-title">Forbidden</div>
-        <p>Access to www.dns-shop.ru is forbidden.</p>
-      </body>
-    </html>
-    """
-
-    assert dns.detect_block_reason(html) == "403 forbidden"
-
-
-def test_dns_diagnose_html_detects_qrator_antibot():
-    from parsers import dns
-
-    html = '<html><head><script src="/__qrator/qauth_utm_v2d_v9118.js"></script></head><body></body></html>'
-
-    diagnostics = dns.diagnose_html(html)
-
-    assert diagnostics["contains_qrator"] is True
-    assert diagnostics["contains_captcha"] is True
-    assert diagnostics["contains_catalog_product"] is False
-    assert diagnostics["contains_product_link"] is False
-
-
-def test_dns_browser_qrator_state_returns_warning(monkeypatch):
-    from parsers import dns
-
-    html = '<html><head><script src="/__qrator/qauth_utm_v2d_v9118.js"></script></head><body></body></html>'
-    monkeypatch.setattr(dns, "fetch_html", lambda *args, **kwargs: html)
-
-    result = dns.parse_offers_with_status(browser_mode=True)
-
-    assert result["blocked"] is False
-    assert result["block_reason"] is None
-    assert result["errors"] == 1
-    assert result["offers"] == []
-    assert result["warnings"] == ["DNS browser HTML looks like Qrator anti-bot challenge. Manual verification required."]
-
-
-def test_dns_browser_no_cards_problem_state_returns_warning(monkeypatch):
-    from parsers import dns
-
-    html = "<html><body><main>DNS shell page without product cards</main></body></html>"
-    monkeypatch.setattr(dns, "fetch_html", lambda *args, **kwargs: html)
-
-    result = dns.parse_offers_with_status(browser_mode=True)
-
-    assert result["blocked"] is False
-    assert result["block_reason"] is None
-    assert result["errors"] == 1
-    assert result["offers"] == []
-    assert result["warnings"] == [
-        "DNS browser HTML contains no parsed product cards. Possible parser mismatch, empty state, or anti-bot page."
-    ]
-
-
-def test_dns_parse_product_link_fallback_card():
-    from parsers import dns
-
-    html = """
-    <html>
-      <body>
-        <article class="product-card">
-          <a href="/product/abc123/videokarta-palit-geforce-rtx-5070-ti-gamingpro/">
-            Видеокарта Palit GeForce RTX 5070 Ti GamingPro 16GB
-          </a>
-          <div class="price">89 999 ₽</div>
-        </article>
-      </body>
-    </html>
-    """
-
-    cards = dns.parse_cards(html)
-
-    assert len(cards) == 1
-    assert cards[0]["title"] == "Видеокарта Palit GeForce RTX 5070 Ti GamingPro 16GB"
-    assert cards[0]["url"] == "/product/abc123/videokarta-palit-geforce-rtx-5070-ti-gamingpro/"
-    assert cards[0]["price"] == 89999
-    assert cards[0]["availability"] == "unknown"
 
 
 def test_citilink_smoke_detects_block_signs():

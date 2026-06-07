@@ -22,21 +22,13 @@ from price_oracle import (
 from tools.offer_deduplication import deduplicate_offers
 
 from parsers import (
-    aliexpress,
-    avito,
     cdek_shopping,
-    dns,
-    eldorado,
     fcenter,
     kns,
-    mvideo,
-    megamarket,
-    ozon,
     nix,
     positronica,
     regard,
     citilink,
-    wildberries,
     xcom_shop,
     yandex_market,
 )
@@ -56,18 +48,10 @@ DEFAULT_CONFIG = {
 PRICE_HISTORY_PATH = Path("price_history.jsonl")
 
 ENABLED_SOURCES: tuple[tuple[str, Any], ...] = (
-    ("DNS", dns),
     ("Ситилинк", citilink),
     ("Регард", regard),
-    ("М.Видео", mvideo),
-    ("Эльдорадо", eldorado),
-    ("Wildberries", wildberries),
-    ("Мегамаркет", megamarket),
-    ("AliExpress", aliexpress),
     ("СДЭК Shopping", cdek_shopping),
-    ("Ozon", ozon),
     ("Яндекс Маркет", yandex_market),
-    ("Avito", avito),
     ("XCOM-SHOP", xcom_shop),
     ("Ф-Центр", fcenter),
     ("KNS", kns),
@@ -75,7 +59,7 @@ ENABLED_SOURCES: tuple[tuple[str, Any], ...] = (
     ("НИКС", nix),
 )
 
-STATUS_AWARE_SOURCE_NAMES = {"DNS", "Ситилинк", "Ozon"}
+STATUS_AWARE_SOURCE_NAMES = {"Ситилинк", "XCOM-SHOP", "Ф-Центр", "KNS", "Позитроника", "НИКС"}
 YANDEX_MARKET_OFFER_QUERY_KEYS = {"sku", "offerid", "waremd5"}
 
 
