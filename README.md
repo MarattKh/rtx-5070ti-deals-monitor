@@ -1,135 +1,133 @@
-# Мониторинг предложений RTX 5070 Ti для покупки в РФ
+# RTX 5070 Ti — мониторинг цен по российской рознице
 
-Проект отслеживает предложения по **RTX 5070 Ti** в российских магазинах и маркетплейсах, фильтрует нерелевантные позиции, сравнивает цены с заданными порогами и отправляет отчёты/сигналы в **Telegram**.
+Автономный ежедневный мониторинг цен на **GeForce RTX 5070 Ti** в 9 российских магазинах. Сравнивает цены с рыночной медианой, формирует сигналы на покупку и отправляет отчёт в **Telegram**.
 
-## Основные возможности
+## Источники (9 активных)
 
-- **Мониторинг магазинов и маркетплейсов РФ** — отслеживание предложений на основных площадках и у отдельных продавцов.
-- **Фильтрация нерелевантного** — отсев дублей, неподходящих моделей и завышенных цен.
-- **Гибкие ценовые пороги** — отдельные пороги для обычного и срочного сигнала.
-- **Отчёты в Telegram** — автоматическая отправка найденных предложений.
-- **Браузерный режим** — отдельный запуск для источников с JS-рендерингом (может требовать доустановки браузерных зависимостей).
-- **Автономный режим** — работа на отдельной Windows-машине через Task Scheduler с самостоятельным циклом доработки через ИИ-агентов.
-- **Диагностика источников** — учёт доступности, блокировок и ошибок парсинга.
+| Магазин | Тип |
+|---|---|
+| Ситилинк | Сетевой ритейлер |
+| Регард | Онлайн-магазин |
+| СДЭК Shopping | Маркетплейс |
+| Яндекс Маркет | Маркетплейс |
+| XCOM-SHOP | Онлайн-магазин |
+| Ф-Центр | Онлайн-магазин |
+| KNS | Онлайн-магазин |
+| Позитроника | Сетевой ритейлер |
+| НИКС | Онлайн-магазин |
 
-## Безопасность и секреты
+## Как работает
 
-**В репозитории не хранятся никакие токены или учётные данные.** Telegram-токен и chat_id читаются **из переменных окружения**, а не из файлов проекта:
+```
+Windows Task Scheduler
+    └─► C:\ProgramData\MonitorAgent\run-monitor.cmd
+            └─► python monitor_5070_ti_v_2.py
+                    ├─► парсинг 9 источников
+                    ├─► фильтрация (RTX 5070 Ti, не аксессуары)
+                    ├─► сравнение с рыночной медианой (история цен)
+                    ├─► сигналы: URGENT_BUY / GOOD_PRICE / NORMAL
+                    └─► Telegram: алерт + ежедневный отчёт
+```
 
-- Обычный мониторинг (`monitor_5070_ti_v_2.py`) читает `TG_BOT_TOKEN` и `TG_CHAT_ID` из окружения.
-- Автономный агент читает `AGENT_NOTIFY_TELEGRAM_BOT_TOKEN` и `AGENT_NOTIFY_TELEGRAM_CHAT_ID` из локального файла **вне репозитория** (`C:\ProgramData\MonitorAgent\agent-notify.env`).
-
-Файл `config.json` содержит **только несекретные ценовые пороги** — поэтому он спокойно хранится в репозитории. Токены в него вписывать не нужно.
+Медиана считается по последним 30 дням из `price_history.jsonl`. Пороги сигналов настраиваются в `config.json`.
 
 ## Быстрый старт
 
 ### Требования
+
 - Python 3.10+
 - pip
 
 ### Установка
+
 ```bash
-git clone https://github.com/MarattKh/monitor-5070ti.git
-cd monitor-5070ti
+git clone https://github.com/MarattKh/rtx-5070ti-deals-monitor.git
+cd rtx-5070ti-deals-monitor
 python -m venv .venv
-.\.venv\Scripts\activate        # Windows
-# source .venv/bin/activate     # macOS/Linux
+.\.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### Настройка Telegram (через переменные окружения)
-Токен в файлы проекта вписывать не нужно — задай переменные окружения перед запуском:
+### Настройка Telegram
+
+Токены задаются через переменные окружения, не хранятся в файлах:
 
 ```powershell
-# Windows (PowerShell), на текущую сессию:
 $env:TG_BOT_TOKEN = "<токен_бота>"
 $env:TG_CHAT_ID   = "<id_чата>"
 ```
-```bash
-# macOS/Linux:
-export TG_BOT_TOKEN="<токен_бота>"
-export TG_CHAT_ID="<id_чата>"
-```
 
 ### Ценовые пороги
-Пороги задаются в `config.json` (это не секрет):
-`max_price_rub`, `new_good_price`, `new_urgent_buy`, `used_good_price`, `used_urgent_buy`.
-За образцом структуры можно смотреть `config.example.json`.
+
+Пример структуры — в `config.example.json`. Скопируй в `config.json` и задай значения в рублях:
+
+```json
+{
+  "new_good_price": 90000,
+  "new_urgent_buy": 75000,
+  "used_good_price": 65000,
+  "used_urgent_buy": 50000
+}
+```
 
 ### Запуск
 
-**Разовый мониторинг (с отправкой в Telegram):**
 ```bash
-.\.venv\Scripts\python.exe monitor_5070_ti_v_2.py
-```
+# Разовый мониторинг
+python monitor_5070_ti_v_2.py
 
-**Вариант с браузерным рендерингом** (для источников, требующих JS):
-```bash
-run_monitor_browser.bat
-```
+# С ежедневным отчётом в Telegram
+python monitor_5070_ti_v_2.py --daily-report
 
-**Обслуживание истории цен** (обрезка/ротация файла истории):
-```bash
-.\.venv\Scripts\python.exe -m tools.price_history_maintenance price_history.jsonl --keep-records 5000
-```
+# Браузерный режим (для источников с JS-рендерингом)
+python monitor_5070_ti_v_2.py --browser
 
-### Автономный запуск (Windows Task Scheduler)
-Для регулярной работы используются батники в корне проекта (`run_monitor.bat`, `run_daily_report.bat`, `run_monitor_browser.bat`) — настрой их в Task Scheduler на нужное расписание.
+# Локальный хелпер (Windows)
+run_monitor.bat
+```
 
 ## Структура проекта
 
 ```
-monitor-5070ti/
-├── parsers/                # Парсеры для разных магазинов и маркетплейсов
-├── tests/                  # Набор тестов
-├── tools/                  # Утилиты: история цен, диагностика, автономный агент
-├── config.example.json     # Пример структуры конфигурации
-├── config.json             # Ценовые пороги (несекретные)
-├── models.py               # Модели данных и логика фильтрации
-├── monitor_5070_ti_v_2.py  # Основной скрипт мониторинга
-├── requirements.txt        # Зависимости
-├── run_*.bat               # Батники запуска для Windows
-└── LICENSE                 # MIT
+rtx-5070ti-deals-monitor/
+├── parsers/                 # Парсеры 9 магазинов
+├── tests/                   # Набор тестов (268 тестов)
+├── tools/                   # Утилиты: агент, история цен, диагностика
+├── config.example.json      # Пример конфигурации
+├── config.json              # Ценовые пороги (не секрет)
+├── models.py                # Модели данных
+├── monitor_5070_ti_v_2.py   # Основной скрипт
+├── requirements.txt         # Зависимости
+├── run_monitor.bat          # Локальный хелпер запуска
+└── LICENSE                  # MIT
 ```
 
 ## История цен
 
-Найденные предложения сохраняются в `price_history.jsonl` (в репозиторий не коммитится). Управление размером файла:
+Предложения сохраняются в `price_history.jsonl` (в репозиторий не коммитится). Управление:
 
 ```bash
 # Оставить последние 5000 записей
-.\.venv\Scripts\python.exe -m tools.price_history_maintenance price_history.jsonl --keep-records 5000
+python -m tools.price_history_maintenance price_history.jsonl --keep-records 5000
 
 # Ротация при превышении 10 МБ
-.\.venv\Scripts\python.exe -m tools.price_history_maintenance price_history.jsonl --rotate-over-bytes 10485760
-
-# Предпросмотр без записи
-.\.venv\Scripts\python.exe -m tools.price_history_maintenance price_history.jsonl --keep-records 5000 --dry-run
+python -m tools.price_history_maintenance price_history.jsonl --rotate-over-bytes 10485760
 ```
 
-## Разработка и тестирование
+## Безопасность
 
-Проект развивается через **Pull Request** и ИИ-агентов (**Claude Code**, **Codex**). Автономный агент работает по циклу «ветка → изменения → тесты → PR» с защитой от наложения запусков и безопасным авто-мержем только для неопасных изменений (изменения в ядре агента уходят на ручное ревью).
+- Telegram-токены читаются из переменных окружения, не хранятся в репозитории.
+- `price_history.jsonl`, `debug_html/`, `*.log`, `.env` перечислены в `.gitignore`.
+- `config.json` содержит только несекретные числовые пороги.
 
-**Запуск тестов:**
+## Тестирование
+
 ```bash
-.\.venv\Scripts\python.exe -m pytest tests/ -v
+python -m pytest tests/ -v
 ```
 
-**Рабочий процесс:**
-1. Отдельная ветка (`git checkout -b feature/что-то-новое`).
-2. Изменения + прогон тестов.
-3. Pull Request с описанием.
-4. После review и merge ветка удаляется.
+268 тестов, покрывают парсеры, фильтрацию, Telegram-отчёт, историю цен.
 
 ## Лицензия
 
-Проект распространяется под лицензией **MIT** — см. файл [LICENSE](./LICENSE).
-
-## Обратная связь
-
-Вопросы и идеи улучшений — через [Issues](https://github.com/MarattKh/monitor-5070ti/issues) или Pull Request.
-
----
-
-**Статус:** активная разработка · набор тестов проходит ✅
+MIT — см. [LICENSE](./LICENSE).

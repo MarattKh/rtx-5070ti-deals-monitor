@@ -213,8 +213,6 @@ def resolve_task_path(raw_path: str) -> Path:
 
 def default_checks(include_monitor: bool = False) -> list[list[str]]:
     checks = [[sys.executable, "-m", "pytest", "-q"]]
-    if (ROOT / "tools" / "smoke_dns.py").exists():
-        checks.append([sys.executable, "tools/smoke_dns.py"])
     if include_monitor:
         checks.append([sys.executable, "monitor_5070_ti_v_2.py"])
     return checks

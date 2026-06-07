@@ -65,11 +65,11 @@ def test_resolve_codex_executable_raises_clear_error_when_missing(monkeypatch):
     assert calls == ["codex", "codex.cmd", "codex.exe"]
 
 
-def test_default_checks_include_pytest_and_dns_smoke():
+def test_default_checks_include_pytest_only():
     checks = agent_run.default_checks()
 
+    assert len(checks) == 1
     assert checks[0][1:] == ["-m", "pytest", "-q"]
-    assert checks[1][1:] == ["tools/smoke_dns.py"]
     assert all("monitor_5070_ti_v_2.py" not in cmd for check in checks for cmd in check)
 
 
