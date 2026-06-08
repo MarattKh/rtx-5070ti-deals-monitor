@@ -9,5 +9,12 @@
       {"part_codes": ["n507t", "ne7507t"]}
     ],
     "exclude_patterns": ["5070\\s+super"]
+  },
+  "source_filters": {
+    "XCOM-SHOP":   "nvidia-geforce-rtx-5070-ti",
+    "KNS":         "nvidia-geforce-rtx-5070-ti",
+    "Ф-Центр":    "46060",
+    "Позитроника": "arrFilter_121681_2580419962",
+    "НИКС":        "5070Ti"
   }
 }

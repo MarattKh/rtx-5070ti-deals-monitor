@@ -9,9 +9,16 @@ from urllib.request import Request, urlopen
 
 from models import ProductOffer
 from parsers.common import _clean_text
+from target_config import get_source_filter
 
-CATALOG_URL = "https://fcenter.ru/product/type/7?param=46060"
+_FILTER = get_source_filter("Ф-Центр")
+CATALOG_URL = f"https://fcenter.ru/product/type/7?param={_FILTER}" if _FILTER else ""
 BASE_URL = "https://fcenter.ru"
+
+_NOT_CONFIGURED = {
+    "offers": [], "blocked": False, "block_reason": None,
+    "warnings": ["Источник не настроен для данного товара"], "errors": 0,
+}
 
 # Full Chrome UA required — fcenter.ru rejects short/truncated user-agents
 UA = (
@@ -110,6 +117,8 @@ def _build_offers(html: str) -> list[ProductOffer]:
 
 
 def parse_offers_with_status(browser_mode: bool = False) -> dict:
+    if not CATALOG_URL:
+        return _NOT_CONFIGURED
     try:
         html = _download_fcenter(CATALOG_URL)
     except HTTPError as exc:

@@ -6,12 +6,20 @@ from urllib.error import HTTPError, URLError
 
 from models import ProductOffer
 from parsers.common import _clean_text, _download
+from target_config import get_source_filter
 
+_FILTER = get_source_filter("KNS")
 CATALOG_URL = (
     "https://www.kns.ru/catalog/komplektuyuschie/videokarty/"
-    "_graficheskij-protsessor_nvidia-geforce-rtx-5070-ti/"
+    f"_graficheskij-protsessor_{_FILTER}/"
+    if _FILTER else ""
 )
 BASE_URL = "https://www.kns.ru"
+
+_NOT_CONFIGURED = {
+    "offers": [], "blocked": False, "block_reason": None,
+    "warnings": ["Источник не настроен для данного товара"], "errors": 0,
+}
 
 # KNS uses schema.org microdata (not JSON-LD): Product itemscope with
 # itemprop=name/url/price meta tags inside each card block.
@@ -93,6 +101,8 @@ def _build_offers(html: str) -> list[ProductOffer]:
 
 
 def parse_offers_with_status(browser_mode: bool = False) -> dict:
+    if not CATALOG_URL:
+        return _NOT_CONFIGURED
     try:
         html = _download(CATALOG_URL)
     except HTTPError as exc:

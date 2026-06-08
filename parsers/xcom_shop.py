@@ -8,12 +8,20 @@ from urllib.error import HTTPError, URLError
 
 from models import ProductOffer
 from parsers.common import _clean_text, _download, parse_rub
+from target_config import get_source_filter
 
+_FILTER = get_source_filter("XCOM-SHOP")
 CATALOG_URL = (
     "https://www.xcom-shop.ru/catalog/komplektyyuschie_dlya_pk_i_noytbykov/"
-    "videokarty/filter/graficheskiy-processor=nvidia-geforce-rtx-5070-ti/"
+    f"videokarty/filter/graficheskiy-processor={_FILTER}/"
+    if _FILTER else ""
 )
 BASE_URL = "https://www.xcom-shop.ru"
+
+_NOT_CONFIGURED = {
+    "offers": [], "blocked": False, "block_reason": None,
+    "warnings": ["Источник не настроен для данного товара"], "errors": 0,
+}
 
 # Primary: parse structured data-dl-product JSON attributes.
 # Note: XCOM injects schema.org JSON-LD for Organization only (no Product/ItemList),
@@ -98,6 +106,8 @@ def detect_block_reason(html: str) -> str | None:
 
 
 def parse_offers_with_status(browser_mode: bool = False) -> dict:
+    if not CATALOG_URL:
+        return _NOT_CONFIGURED
     try:
         html = _download(CATALOG_URL)
     except HTTPError as exc:

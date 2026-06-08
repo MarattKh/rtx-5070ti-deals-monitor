@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 from models import ProductOffer
 from parsers.common import _clean_text
+from target_config import get_source_filter
 
 LISTING_URL = (
     "https://www.nix.ru/price/price_list.html?section=video_cards_all"
@@ -23,11 +24,19 @@ _UA = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 
+_FILTER = get_source_filter("НИКС")
+
 # Anchors like:  href='/autocatalog/.../GeForce-RTX5070Ti_NNNNNN.html' title='...' >TITLE</a>
+# The token (e.g. "5070Ti") is the product-specific fragment in the URL path.
 _PRODUCT_RE = re.compile(
-    r"href='(/autocatalog/[^']+5070Ti_(\d+)\.html)' title='[^']*' >(.*?)</a>",
+    rf"href='(/autocatalog/[^']+{re.escape(_FILTER)}_(\d+)\.html)' title='[^']*' >(.*?)</a>",
     re.S,
-)
+) if _FILTER else None
+
+_NOT_CONFIGURED = {
+    "offers": [], "blocked": False, "block_reason": None,
+    "warnings": ["Источник не настроен для данного товара"], "errors": 0,
+}
 
 # Price links: <a class='n' title='Положить в корзину' ...>PRICE</a>
 # Excludes delivery-surcharge entries that start with '+' (e.g. '+216').
@@ -88,7 +97,9 @@ def _fetch_min_price(good_id: str) -> float | None:
 
 
 def parse_cards(listing_html: str) -> list[dict]:
-    """Extract RTX 5070 Ti product cards (without prices) from the listing HTML."""
+    """Extract product cards (without prices) from the listing HTML."""
+    if _PRODUCT_RE is None:
+        return []
     cards: list[dict] = []
     seen_ids: set[str] = set()
 
@@ -161,6 +172,8 @@ def _build_offers(cards: list[dict]) -> list[ProductOffer]:
 
 
 def parse_offers_with_status(browser_mode: bool = False) -> dict:
+    if not _FILTER:
+        return _NOT_CONFIGURED
     try:
         listing_html = _fetch_listing()
     except HTTPError as exc:

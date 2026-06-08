@@ -44,6 +44,20 @@ DEFAULT_TARGET: dict[str, Any] = {
         ],
         "exclude_patterns": ["5070\\s+super"],
     },
+    # Product-specific filter tokens for the five filtered-URL sources.
+    # Each value is the minimal fragment that differs per product:
+    #   XCOM-SHOP / KNS — GPU slug in the catalog filter path
+    #   Ф-Центр         — numeric param= value
+    #   Позитроника      — Bitrix arrFilter_… key name (value is always =Y)
+    #   НИКС             — token that appears in product URL paths (5070Ti)
+    # Empty string → parser skips the source with "not configured" status.
+    "source_filters": {
+        "XCOM-SHOP": "nvidia-geforce-rtx-5070-ti",
+        "KNS": "nvidia-geforce-rtx-5070-ti",
+        "Ф-Центр": "46060",
+        "Позитроника": "arrFilter_121681_2580419962",
+        "НИКС": "5070Ti",
+    },
 }
 
 TARGET_PATH = Path("target.json")
@@ -69,8 +83,8 @@ def load_target(path: str | Path = TARGET_PATH) -> dict[str, Any]:
 
         for key, default_value in DEFAULT_TARGET.items():
             value = raw.get(key, default_value)
-            if key == "relevance" and not isinstance(value, dict):
-                logging.getLogger("target").error("invalid relevance in %s: %r", target_path, value)
+            if key in ("relevance", "source_filters") and not isinstance(value, dict):
+                logging.getLogger("target").error("invalid %s in %s: %r", key, target_path, value)
                 value = default_value
             target[key] = value
     except Exception as exc:
@@ -83,3 +97,18 @@ def load_target(path: str | Path = TARGET_PATH) -> dict[str, Any]:
 def get_query(path: str | Path = TARGET_PATH) -> str:
     """Search query string for building source URLs."""
     return str(load_target(path)["query"])
+
+
+def get_source_filter(name: str, path: str | Path = TARGET_PATH) -> str:
+    """Return the product-specific filter value for a named source.
+
+    Returns an empty string when the source has no entry in ``source_filters``
+    (meaning the source is not configured for the current target). Parsers
+    treat an empty return value as a skip signal — they return a
+    ``warnings=["Источник не настроен для данного товара"]`` status dict
+    instead of fetching the catalog.
+    """
+    filters = load_target(path).get("source_filters", {})
+    if not isinstance(filters, dict):
+        return ""
+    return str(filters.get(name, ""))
