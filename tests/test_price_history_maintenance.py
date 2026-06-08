@@ -91,6 +91,66 @@ def test_rotate_if_larger_than_leaves_small_file_unchanged(tmp_path):
     assert result.final_records == 2
 
 
+def test_set_product_id_tags_records_missing_it(tmp_path):
+    history_path = tmp_path / "price_history.jsonl"
+    write_jsonl(history_path, 3)
+
+    result = price_history_maintenance.set_product_id(history_path, "rtx_5070_ti")
+
+    records = read_jsonl(history_path)
+    assert all(r["product_id"] == "rtx_5070_ti" for r in records)
+    assert result.total_records == 3
+    assert result.updated_records == 3
+
+
+def test_set_product_id_is_idempotent_without_overwrite(tmp_path):
+    history_path = tmp_path / "price_history.jsonl"
+    write_jsonl(history_path, 2)
+
+    price_history_maintenance.set_product_id(history_path, "rtx_5070_ti")
+    second = price_history_maintenance.set_product_id(history_path, "other_id")
+
+    # Already-tagged records keep their id; nothing is updated on the re-run.
+    assert second.updated_records == 0
+    assert all(r["product_id"] == "rtx_5070_ti" for r in read_jsonl(history_path))
+
+
+def test_set_product_id_overwrite_retags_all(tmp_path):
+    history_path = tmp_path / "price_history.jsonl"
+    write_jsonl(history_path, 2)
+    price_history_maintenance.set_product_id(history_path, "rtx_5070_ti")
+
+    result = price_history_maintenance.set_product_id(history_path, "rtx_5080", overwrite=True)
+
+    assert result.updated_records == 2
+    assert all(r["product_id"] == "rtx_5080" for r in read_jsonl(history_path))
+
+
+def test_set_product_id_dry_run_does_not_modify_file(tmp_path):
+    history_path = tmp_path / "price_history.jsonl"
+    write_jsonl(history_path, 2)
+    original = history_path.read_text(encoding="utf-8")
+
+    result = price_history_maintenance.set_product_id(history_path, "rtx_5070_ti", dry_run=True)
+
+    assert history_path.read_text(encoding="utf-8") == original
+    assert result.updated_records == 2
+    assert result.dry_run is True
+
+
+def test_cli_reports_backfill_result(tmp_path, capsys):
+    history_path = tmp_path / "price_history.jsonl"
+    write_jsonl(history_path, 3)
+
+    result = price_history_maintenance.main([str(history_path), "--set-product-id", "rtx_5070_ti"])
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "Product id: rtx_5070_ti" in captured.out
+    assert "Records tagged: 3 / 3" in captured.out
+    assert captured.err == ""
+
+
 def test_cli_reports_retention_result(tmp_path, capsys):
     history_path = tmp_path / "price_history.jsonl"
     write_jsonl(history_path, 4)

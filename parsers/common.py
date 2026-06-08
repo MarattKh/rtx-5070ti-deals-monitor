@@ -4,10 +4,11 @@ import html as html_lib
 import re
 from datetime import datetime, timezone
 from urllib.error import URLError
-from urllib.parse import urljoin
+from urllib.parse import quote, quote_plus, urljoin
 from urllib.request import Request, urlopen
 
 from models import ProductOffer
+from target_config import get_query
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 PRICE_RE = re.compile(r"(\d[\d\s\u00a0]{2,9})\s?(₽|руб|RUB)", re.IGNORECASE)
@@ -18,6 +19,19 @@ HREF_RE = re.compile(r"href=[\"']([^\"']+)[\"']", re.IGNORECASE)
 def parse_rub(value: str) -> float | None:
     digits = re.sub(r"[^\d]", "", value)
     return float(digits) if digits else None
+
+
+def build_search_url(template: str, query: str | None = None, *, plus: bool = False) -> str:
+    """Build a source search URL from a ``{query}`` template and the target query.
+
+    *plus* selects ``+`` form encoding (``quote_plus``) for hosts that use it
+    instead of ``%20`` (``quote``). With the default "rtx 5070 ti" query this
+    reproduces each source's original hard-coded URL byte-for-byte.
+    """
+    if query is None:
+        query = get_query()
+    encoded = quote_plus(query) if plus else quote(query)
+    return template.format(query=encoded)
 
 
 def _download(url: str) -> str:

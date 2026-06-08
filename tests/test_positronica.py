@@ -154,39 +154,39 @@ def test_positronica_module_in_enabled_sources():
 
 # ── Part-code recognition tests ──────────────────────────────────────────────
 
-def test_is_rtx_5070_ti_accepts_gigabyte_n507t():
+def test_is_relevant_product_accepts_gigabyte_n507t():
     """GV-N507T… must be accepted via OEM part-code (compact contains 'n507t')."""
-    assert mon.is_rtx_5070_ti(
+    assert mon.is_relevant_product(
         "Видеокарта Gigabyte GV-N507TEAGLEOC ICE-16GD 16ГБ, RET",
         "Видеокарта Gigabyte GV-N507TEAGLEOC ICE-16GD 16ГБ, RET",
     )
 
 
-def test_is_rtx_5070_ti_rejects_gigabyte_n5070_non_ti():
+def test_is_relevant_product_rejects_gigabyte_n5070_non_ti():
     """GV-N5070… (no T suffix) must NOT be accepted — that's the non-Ti 5070."""
-    assert not mon.is_rtx_5070_ti(
+    assert not mon.is_relevant_product(
         "Видеокарта Gigabyte GV-N5070EAGLE-16GD 16ГБ",
         "Видеокарта Gigabyte GV-N5070EAGLE-16GD 16ГБ",
     )
 
 
-def test_is_rtx_5070_ti_rejects_5060_ti():
+def test_is_relevant_product_rejects_5060_ti():
     """RTX 5060 Ti cards must never pass as 5070 Ti."""
-    assert not mon.is_rtx_5070_ti(
+    assert not mon.is_relevant_product(
         "Видеокарта Asus DUAL-RTX5060TI-O16G-EVO 16ГБ",
         "Видеокарта Asus DUAL-RTX5060TI-O16G-EVO 16ГБ",
     )
 
 
-def test_is_rtx_5070_ti_rejects_5080():
-    assert not mon.is_rtx_5070_ti(
+def test_is_relevant_product_rejects_5080():
+    assert not mon.is_relevant_product(
         "Видеокарта MSI RTX 5080 16G VENTUS 3X",
         "Видеокарта MSI RTX 5080 16G VENTUS 3X",
     )
 
 
-def test_is_rtx_5070_ti_rejects_5090():
-    assert not mon.is_rtx_5070_ti(
+def test_is_relevant_product_rejects_5090():
+    assert not mon.is_relevant_product(
         "Видеокарта ASUS ROG STRIX RTX 5090 32G",
         "Видеокарта ASUS ROG STRIX RTX 5090 32G",
     )

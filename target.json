@@ -1,0 +1,13 @@
+{
+  "product_id": "rtx_5070_ti",
+  "label": "RTX 5070 Ti",
+  "query": "rtx 5070 ti",
+  "relevance": {
+    "match_any": [
+      {"all_tokens": ["5070", "ti"]},
+      {"compact": "5070ti"},
+      {"part_codes": ["n507t", "ne7507t"]}
+    ],
+    "exclude_patterns": ["5070\\s+super"]
+  }
+}

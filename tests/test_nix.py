@@ -273,25 +273,25 @@ def test_filter_rejects_5080_nix_offer():
 # Part-code tests: Palit NE7507T (observed in rejected НИКС offers)
 # ---------------------------------------------------------------------------
 
-def test_is_rtx_5070_ti_accepts_palit_ne7507ts():
+def test_is_relevant_product_accepts_palit_ne7507ts():
     """NE7507TS19T2 must be accepted via ne7507t part-code."""
-    assert mon.is_rtx_5070_ti(
+    assert mon.is_relevant_product(
         "Palit NE7507TS19T2-GB2031A (16 ГБ, GDDR7, 256 бит, PCI Express)",
         "Palit NE7507TS19T2-GB2031A (16 ГБ, GDDR7, 256 бит, PCI Express)",
     )
 
 
-def test_is_rtx_5070_ti_accepts_palit_ne7507t0():
+def test_is_relevant_product_accepts_palit_ne7507t0():
     """NE7507T019T2 must be accepted via ne7507t part-code."""
-    assert mon.is_rtx_5070_ti(
+    assert mon.is_relevant_product(
         "Palit NE7507T019T2-GB2031A (16 ГБ, GDDR7, 256 бит, PCI Express)",
         "Palit NE7507T019T2-GB2031A (16 ГБ, GDDR7, 256 бит, PCI Express)",
     )
 
 
-def test_is_rtx_5070_ti_rejects_hypothetical_palit_non_ti():
+def test_is_relevant_product_rejects_hypothetical_palit_non_ti():
     """A hypothetical Palit RTX 5070 (non-Ti) code ne75070 must NOT match."""
-    assert not mon.is_rtx_5070_ti(
+    assert not mon.is_relevant_product(
         "Palit NE75070019T2-XY1234 (12 ГБ, GDDR7)",
         "Palit NE75070019T2-XY1234 (12 ГБ, GDDR7)",
     )

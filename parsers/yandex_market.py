@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from urllib.parse import urljoin
 
 from models import ProductOffer
-from parsers.common import _clean_text, parse_rub
+from parsers.common import _clean_text, build_search_url, parse_rub
 
 BASE_URL = "https://market.yandex.ru"
-SEARCH_URL = "https://market.yandex.ru/search?text=rtx%205070%20ti"
+SEARCH_URL = build_search_url("https://market.yandex.ru/search?text={query}")
 
 _CARD_RE = re.compile(r'data-auto="searchOrganic"')
 _TITLE_RE = re.compile(r'data-auto="snippet-title"[^>]*?title="([^"]+)"', re.S)

@@ -149,6 +149,7 @@ def test_append_price_history_writes_jsonl_records(tmp_path):
     record = json.loads(lines[0])
     assert record == {
         "timestamp": timestamp,
+        "product_id": "rtx_5070_ti",
         "source": "Ситилинк",
         "title": "RTX 5070 Ti Ventus",
         "price": 89000,

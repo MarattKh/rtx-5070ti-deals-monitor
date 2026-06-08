@@ -6,9 +6,9 @@ from urllib.error import URLError
 
 from models import ProductOffer
 from parsers.browser import fetch_html
-from parsers.common import _clean_text, _download, parse_rub
+from parsers.common import _clean_text, _download, build_search_url, parse_rub
 
-SEARCH_URL = "https://www.citilink.ru/search/?text=rtx%205070%20ti"
+SEARCH_URL = build_search_url("https://www.citilink.ru/search/?text={query}")
 BASE_URL = "https://www.citilink.ru"
 
 CARD_RE = re.compile(r'(<article[^>]+class="[^"]*product-card[^"]*"[^>]*>.*?</article>)', re.S)

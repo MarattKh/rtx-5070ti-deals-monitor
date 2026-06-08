@@ -29,6 +29,7 @@ def _load_history_prices(
     history_path: Path,
     window_days: int,
     now: datetime,
+    product_id: str | None = None,
 ) -> list[float]:
     cutoff = now - timedelta(days=window_days)
     prices: list[float] = []
@@ -40,6 +41,8 @@ def _load_history_prices(
             continue
         try:
             record = json.loads(line)
+            if product_id is not None and record.get("product_id") != product_id:
+                continue
             ts = datetime.fromisoformat(record["timestamp"])
             if ts >= cutoff:
                 price = float(record["price"])
@@ -56,17 +59,23 @@ def compute_market_median(
     window_days: int = MEDIAN_WINDOW_DAYS_DEFAULT,
     min_count: int = MEDIAN_MIN_COUNT_DEFAULT,
     now: datetime | None = None,
+    product_id: str | None = None,
 ) -> MarketMedian | None:
     """Return sliding-window median from price_history.jsonl.
 
     Falls back to the current-run prices when the history window has fewer
     than *min_count* records, and marks the result as unreliable.
     Returns None when no prices are available at all.
+
+    When *product_id* is given, only history records carrying that id are
+    counted, keeping medians separate per monitored product. Records without a
+    product_id are ignored in that mode (run the price-history backfill to tag
+    legacy records). With *product_id* ``None`` every record is counted.
     """
     if now is None:
         now = datetime.now(timezone.utc)
 
-    prices = _load_history_prices(Path(history_path), window_days, now)
+    prices = _load_history_prices(Path(history_path), window_days, now, product_id)
 
     if len(prices) >= min_count:
         return MarketMedian(

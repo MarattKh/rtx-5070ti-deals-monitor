@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 
 from models import ProductOffer
-from parsers.common import _clean_text, _download, parse_rub
+from parsers.common import _clean_text, _download, build_search_url, parse_rub
 
-SEARCH_URL = "https://www.regard.ru/catalog/tovar/search?search=rtx+5070+ti"
+SEARCH_URL = build_search_url("https://www.regard.ru/catalog/tovar/search?search={query}", plus=True)
 BASE_URL = "https://www.regard.ru"
 
 CARD_START_RE = re.compile(r'<div[^>]+class="[^"]*CardMain_wrap[^"]*"[^>]*>', re.S)

@@ -6,14 +6,14 @@ import re
 from urllib.parse import urljoin
 
 from models import ProductOffer
-from parsers.common import parse_rub, scrape_search_page
+from parsers.common import build_search_url, parse_rub, scrape_search_page
 
 try:
     from bs4 import BeautifulSoup
 except ImportError:  # pragma: no cover
     BeautifulSoup = None
 
-SEARCH_URL = "https://cdek.shopping/search/?q=rtx%205070%20ti"
+SEARCH_URL = build_search_url("https://cdek.shopping/search/?q={query}")
 BASE_URL = "https://cdek.shopping"
 SOURCE = "Cdek Shopping"
 PRICE_RE = re.compile(r"(\d[\d\s\u00a0]{2,11})\s*(?:\u20bd|\u0440\u0443\u0431|RUB)", re.IGNORECASE)
@@ -72,13 +72,13 @@ def _is_unavailable(raw_text: str) -> bool:
 
 
 def _build_offer(title: str, price: float | None, href: str, raw_text: str) -> ProductOffer | None:
-    from monitor_5070_ti_v_2 import is_accessory_or_invalid, is_rtx_5070_ti
+    from monitor_5070_ti_v_2 import is_accessory_or_invalid, is_relevant_product
 
     title = _text(title)
     raw_text = _text(raw_text)
     if not title or not price or _is_unavailable(raw_text):
         return None
-    if not is_rtx_5070_ti(title, raw_text):
+    if not is_relevant_product(title, raw_text):
         return None
     if is_accessory_or_invalid(title, raw_text):
         return None

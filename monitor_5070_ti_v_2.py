@@ -19,6 +19,7 @@ from price_oracle import (
     classify_market_tier,
     compute_market_median,
 )
+from target_config import load_target
 from tools.offer_deduplication import deduplicate_offers
 
 from parsers import (
@@ -46,6 +47,11 @@ DEFAULT_CONFIG = {
 }
 
 PRICE_HISTORY_PATH = Path("price_history.jsonl")
+
+# The monitored product (search query, label, product_id, relevance ruleset).
+# Loaded once at import; everything product-specific reads from here so the
+# monitor can be retargeted by editing target.json (see target_config.py).
+TARGET = load_target()
 
 ENABLED_SOURCES: tuple[tuple[str, Any], ...] = (
     ("Ситилинк", citilink),
@@ -104,37 +110,46 @@ def normalize_title(text: str) -> str:
     return " ".join(text.lower().replace("-", " ").split())
 
 
-# OEM part-code prefixes that unambiguously identify RTX 5070 Ti.
-# Checked against the compact (no-space) form of a normalized title.
-#
-#   Gigabyte GV-N507T…  →  compact contains "n507t"
-#     N=NVIDIA, 507=5070, T=Ti suffix — non-Ti variant uses "n5070" (with a 0),
-#     so "n507t" is exclusive to the Ti.
-#
-#   Palit NE7507T…  →  compact contains "ne7507t"
-#     NE=Nvidia/Palit, 7507=5070 (reversed tens), T=Ti — non-Ti would use
-#     "ne75070" or similar without immediate T after 7507, so "ne7507t" is Ti-only.
-#
-# Extend this tuple only when a new code is observed in real rejected offers.
-_PART_CODES_5070_TI: tuple[str, ...] = ("n507t", "ne7507t")
+def _relevance(relevance: dict[str, Any] | None = None) -> dict[str, Any]:
+    return relevance if relevance is not None else TARGET["relevance"]
 
 
-def _has_5070_ti_signal(haystack: str, compact: str) -> bool:
-    """True if haystack/compact unambiguously describes an RTX 5070 Ti GPU."""
-    if "5070ti" in compact or ("5070" in haystack and "ti" in haystack):
-        return True
-    return any(code in compact for code in _PART_CODES_5070_TI)
+def _has_product_signal(haystack: str, compact: str, relevance: dict[str, Any] | None = None) -> bool:
+    """True if haystack/compact unambiguously describes the monitored product.
+
+    Driven by ``relevance.match_any`` from target.json — any clause matching is
+    enough. Clause shapes: ``all_tokens`` (every token is a substring of the
+    normalized title), ``compact`` (substring of the space-stripped title), and
+    ``part_codes`` (OEM codes checked against the compact form).
+    """
+    for clause in _relevance(relevance).get("match_any", []):
+        tokens = clause.get("all_tokens")
+        if tokens and all(token in haystack for token in tokens):
+            return True
+        compact_needle = clause.get("compact")
+        if compact_needle and compact_needle in compact:
+            return True
+        part_codes = clause.get("part_codes")
+        if part_codes and any(code in compact for code in part_codes):
+            return True
+    return False
 
 
-def is_rtx_5070_ti(title: str, raw_text: str) -> bool:
+def is_relevant_product(title: str, raw_text: str) -> bool:
     haystack = normalize_title(f"{title} {raw_text}")
     compact = haystack.replace(" ", "")
-    return _has_5070_ti_signal(haystack, compact)
+    return _has_product_signal(haystack, compact)
 
 
+def _matches_product_exclude(haystack: str, relevance: dict[str, Any] | None = None) -> bool:
+    """True if a product-specific exclude pattern (e.g. 5070 Super) matches."""
+    return any(re.search(pattern, haystack) for pattern in _relevance(relevance).get("exclude_patterns", []))
+
+
+# Universal, product-neutral accessory filter (cables, brackets, water blocks,
+# laptops, PCs…). Product-specific look-alike exclusions live in target.json.
 _ACCESSORY_RE = re.compile(
     r"\b(?:"
-    r"5070\s+super|"
     r"кабель|переходник|кулер|водоблок|waterblock|ноутбук|laptop|компьютер|"
     r"системный\s+блок|gaming\s+pc|"
     r"пк|корпус|держатель|подставка|чехол|"
@@ -147,7 +162,10 @@ def is_accessory_or_invalid(title: str, raw_text: str) -> bool:
     haystack = normalize_title(f"{title} {raw_text}")
     compact = haystack.replace(" ", "")
 
-    if not _has_5070_ti_signal(haystack, compact):
+    if not _has_product_signal(haystack, compact):
+        return True
+
+    if _matches_product_exclude(haystack):
         return True
 
     return bool(_ACCESSORY_RE.search(haystack))
@@ -187,12 +205,12 @@ def filter_offers(offers: Iterable[ProductOffer], config: dict[str, int] | None 
             continue
         if _is_rejected_search_url(item):
             continue
-        if not is_rtx_5070_ti(item.title, item.raw_text):
+        if not is_relevant_product(item.title, item.raw_text):
             continue
         if is_accessory_or_invalid(item.title, item.raw_text):
             continue
         norm = normalize_title(item.title + " " + item.raw_text)
-        if not _has_5070_ti_signal(norm, norm.replace(" ", "")):
+        if not _has_product_signal(norm, norm.replace(" ", "")):
             continue
         out.append(item)
     out.sort(key=lambda x: x.price)
@@ -248,9 +266,13 @@ def build_price_history_record(
     offer: ProductOffer,
     timestamp: str,
     config: dict[str, int] | None = None,
+    product_id: str | None = None,
 ) -> dict[str, Any]:
+    if product_id is None:
+        product_id = TARGET["product_id"]
     return {
         "timestamp": timestamp,
+        "product_id": product_id,
         "source": offer.source,
         "title": offer.title,
         "price": offer.price,
@@ -267,16 +289,19 @@ def append_price_history(
     path: str | Path = PRICE_HISTORY_PATH,
     config: dict[str, int] | None = None,
     timestamp: str | None = None,
+    product_id: str | None = None,
 ) -> None:
     if config is None:
         config = load_config()
     if timestamp is None:
         timestamp = datetime.now(timezone.utc).isoformat()
+    if product_id is None:
+        product_id = TARGET["product_id"]
 
     history_path = Path(path)
     with history_path.open("a", encoding="utf-8") as f:
         for offer in offers:
-            record = build_price_history_record(offer, timestamp, config)
+            record = build_price_history_record(offer, timestamp, config, product_id)
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
@@ -284,7 +309,7 @@ def render_markdown(offers: list[ProductOffer], config: dict[str, int] | None = 
     if config is None:
         config = load_config()
     lines = [
-        "# RTX 5070 Ti offers",
+        f"# {TARGET['label']} offers",
         "",
         "| Source | Title | Price | Condition | Availability | Signal | URL |",
         "|---|---|---:|---|---|---|---|",
@@ -436,7 +461,7 @@ def render_results_markdown(
     tier_counts = {t: sum(1 for _, v in tier_list if v == t) for t in ("suspicious", "buy", "at_market", "above_market", "unknown")}
 
     lines = [
-        "# RTX 5070 Ti offers",
+        f"# {TARGET['label']} offers",
         "",
         "## Summary",
         "",
@@ -551,7 +576,7 @@ def save_reports(
     Path("urgent_deals.md").write_text(render_markdown(urgent, config), encoding="utf-8")
 
     prompt = (
-        "Проанализируй список предложений RTX 5070 Ti, выдели аномально дешевые, "
+        f"Проанализируй список предложений {TARGET['label']}, выдели аномально дешевые, "
         "проверь возможные риски продавца и предложи стратегию покупки."
     )
     Path("latest_ai_prompt.md").write_text(prompt + "\n", encoding="utf-8")
@@ -604,7 +629,7 @@ def build_telegram_signal_text(
         return None
 
     median_str = f"{market_median.value:.0f} RUB" if market_median else "n/a"
-    lines = ["⚡ RTX 5070 Ti мониторинг", "", f"Медиана рынка: {median_str}", ""]
+    lines = [f"⚡ {TARGET['label']} мониторинг", "", f"Медиана рынка: {median_str}", ""]
 
     if buy_offers:
         lines.append(f"Сигналы к покупке (≤{config['buy_pct']}% медианы):")
@@ -653,7 +678,7 @@ def build_telegram_daily_report_text(
 
     median_str = f"{market_median.value:.0f} RUB" if market_median else "n/a"
     lines = [
-        "📊 RTX 5070 Ti daily report",
+        f"📊 {TARGET['label']} daily report",
         "",
         f"Медиана рынка: {median_str}",
         f"- buy (≤{config['buy_pct']}%): {len(buy_offers)}",
@@ -872,6 +897,7 @@ def main() -> None:
         [o.price for o in filtered],
         window_days=config["median_window_days"],
         min_count=config["median_min_count"],
+        product_id=TARGET["product_id"],
     )
     save_reports(filtered, source_stats, config, market_median)
     notify_telegram(filtered, source_stats, daily_report=args.daily_report, config=config, market_median=market_median)
