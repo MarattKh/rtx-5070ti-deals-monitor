@@ -414,9 +414,13 @@ def _ru_block_reason(summary: dict[str, Any]) -> str:
     return str(reason)[:60] if reason else "неизвестно"
 
 
+_NOT_CONFIGURED_WARNING = "Источник не настроен для данного товара"
+
+
 def _build_source_health_ru(source_stats: list[dict[str, Any]]) -> list[str]:
     working: list[str] = []
     silent: list[str] = []
+    not_configured: list[str] = []
     problems: list[str] = []
 
     for stat in source_stats:
@@ -424,7 +428,9 @@ def _build_source_health_ru(source_stats: list[dict[str, Any]]) -> list[str]:
         name = s["source"]
         has_problem = s["classification"] in ("unavailable", "error") or bool(s["warnings"])
 
-        if s["classification"] == "ok":
+        if any(_NOT_CONFIGURED_WARNING in w for w in s["warnings"]):
+            not_configured.append(name)
+        elif s["classification"] == "ok":
             working.append(f"{name} ({s['filtered_count']})")
         elif has_problem:
             problems.append(f"{name} — {_ru_block_reason(s)}")
@@ -436,6 +442,8 @@ def _build_source_health_ru(source_stats: list[dict[str, Any]]) -> list[str]:
         lines.append("Рабочие: " + ", ".join(working))
     if silent:
         lines.append("Молчат: " + ", ".join(silent))
+    if not_configured:
+        lines.append("Не настроены для товара: " + ", ".join(not_configured))
     if problems:
         lines.append("Заблокировано / Проблемы:")
         lines.extend(f"  {p}" for p in problems)

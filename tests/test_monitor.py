@@ -910,6 +910,44 @@ def test_source_health_ru_blocked_group():
     assert "warnings" not in text
 
 
+def test_source_health_ru_not_configured_group():
+    import monitor_5070_ti_v_2 as mon
+
+    lines = mon._build_source_health_ru([
+        {
+            "source": "Ф-Центр",
+            "raw_count": 0,
+            "filtered_count": 0,
+            "error": "",
+            "blocked": False,
+            "block_reason": None,
+            "warnings": [mon._NOT_CONFIGURED_WARNING],
+        },
+    ])
+    text = "\n".join(lines)
+    assert "Не настроены для товара:" in text
+    assert "Ф-Центр" in text
+    assert "Молчат" not in text
+    assert "Заблокировано" not in text
+    assert "Проблемы" not in text
+
+
+def test_source_health_ru_not_configured_does_not_bleed_into_silent():
+    import monitor_5070_ti_v_2 as mon
+
+    # A genuinely silent source (no warnings) must still land in "Молчат",
+    # not in "Не настроены".
+    lines = mon._build_source_health_ru([
+        {"source": "Регард", "raw_count": 0, "filtered_count": 0, "error": "", "blocked": False, "block_reason": None, "warnings": []},
+        {"source": "KNS", "raw_count": 0, "filtered_count": 0, "error": "", "blocked": False, "block_reason": None, "warnings": [mon._NOT_CONFIGURED_WARNING]},
+    ])
+    text = "\n".join(lines)
+    assert "Молчат:" in text and "Регард" in text
+    assert "Не настроены для товара:" in text and "KNS" in text
+    assert "Регард" not in text.split("Не настроены")[1] if "Не настроены" in text else True
+    assert "KNS" not in text.split("Молчат")[1].split("\n")[0] if "Молчат" in text else True
+
+
 def test_source_health_ru_no_english_labels_in_daily_report(monkeypatch):
     import sys
     import types
